@@ -1,8 +1,4 @@
-Oui. Ton dépôt contient actuellement un `README.md` quasi vide, plus deux dossiers principaux : `wan2gp_server` avec le serveur API et les templates, et `wan2gp_video_agent_skill` avec `SKILL.md` et `wan2gp_skill.py`. ([GitHub][1])
 
-Voici un `README.md` propre, prêt à coller à la racine du repo :
-
-````markdown
 # Wan2GP Agentic Skill
 
 Wan2GP Agentic Skill is a small LAN-oriented integration layer that allows AI agents to generate videos through a Windows PC running Wan2GP.
