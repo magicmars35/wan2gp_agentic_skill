@@ -1,5 +1,5 @@
 
-# Wan2GP Agentic Skill
+# Wan2GP Agentic Skill (LTX 2.3 Distilled 1.1)
 
 Wan2GP Agentic Skill is a small LAN-oriented integration layer that allows AI agents to generate videos through a Windows PC running Wan2GP.
 
@@ -158,10 +158,6 @@ G:\APPS\Wan2GP\ltx2_template_t2v.json
 G:\APPS\Wan2GP\ltx2_template_i2v.json
 ```
 
-The two JSON templates must be exported from the Wan2GP Web UI:
-
-* `ltx2_template_t2v.json` for text to video
-* `ltx2_template_i2v.json` for image to video
 
 ## Why two templates?
 
