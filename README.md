@@ -89,12 +89,6 @@ This project is useful when you have:
 * a local network connecting them
 * a need for agents to generate videos without installing Wan2GP locally
 
-Example:
-
-```text
-Genesis, Alya, Hemera, Zeya, Hermes, or any other agent
-can request a video generation from a central Wan2GP machine.
-```
 
 ## Fixed model
 
