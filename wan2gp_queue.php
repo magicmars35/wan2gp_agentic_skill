@@ -8,7 +8,7 @@
 // ======================================================
 
 $WAN2GP_URL = "http://192.168.1.53:7861";
-$WAN2GP_TOKEN = "HGH7EPBCE51vureBCBUEBCE75678edfv9HUGBC7E";
+$WAN2GP_TOKEN = "my-super-token-to-change";
 
 $AUTO_REFRESH_SECONDS = 5;
 
