@@ -145,6 +145,15 @@ pip install fastapi uvicorn python-multipart pydantic
 
 Start the server:
 
+
+> [!CAUTION]
+> Do **not** run the Wan2GP main program at the same time as the API web server.
+>
+> Both may try to use the same Wan2GP resources, which can cause conflicts, failed jobs, or unstable behavior.
+
+Again : Only run this API server script. It is NOT necessary to run the WAN2GP legacy program (wgp.py) 
+
+
 Use conda Wan2gp offical setup inscruction to enter the Wan2GP python environment.
 
 (I used  venv to install WAN2GP).
