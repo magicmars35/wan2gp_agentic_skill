@@ -100,9 +100,7 @@ wan2gp_agentic_skill/
 │   ├── wan2gp_skill.py
 │   └── SKILL.md
 │
-└── php_monitor/
-    ├── wan2gp_queue.php
-    └── wan2gp_download.php
+└── wan2gp_queue.php
 ```
 
 The exact folder structure may vary, but the logic is:
