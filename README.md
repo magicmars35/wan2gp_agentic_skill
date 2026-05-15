@@ -121,7 +121,8 @@ Example Wan2GP folder:
 G:\APPS\Wan2GP
 ```
 
-Copy the files from `wan2gp_server` into the Wan2GP installation folder:
+1. Copy all the JSON  files from `wan2gp_server` into the Wan2GP installation folder.
+2. Copy also `wan2gp_api_server.py` into the Wan2GP installation folder
 
 ```text
 wan2gp_api_server.py
@@ -136,7 +137,6 @@ ltx2_template_s2v_i2v_lora.json
 The JSON files are templates exported from the Wan2GP Web UI.
 
 Each generation mode uses its own template to avoid internal configuration conflicts.
-
 Install the API dependencies inside the same Python environment used by Wan2GP:
 
 ```powershell
@@ -145,31 +145,19 @@ pip install fastapi uvicorn python-multipart pydantic
 
 Start the server:
 
+Use conda Wan2gp offical setup inscruction to enter the Wan2GP python environment.
+
+(I used  venv to install WAN2GP).
+
 ```powershell
 Set-Location "G:\APPS\Wan2GP"
 .\venv\Scripts\activate
+
+
 python wan2gp_api_server.py
 ```
 
 Depending on your Wan2GP installation, the virtual environment path may be different.
-
-Alternative examples:
-
-```powershell
-.\.venv\Scripts\activate
-```
-
-or:
-
-```powershell
-.\installer_files\env\Scripts\activate
-```
-
-Test locally:
-
-```powershell
-Invoke-RestMethod -Uri "http://127.0.0.1:7861/health"
-```
 
 If your agents are on the LAN, open the Windows firewall port:
 
