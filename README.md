@@ -1,5 +1,10 @@
 # Wan2GP Agentic Skill
 
+
+<img width="1536" height="1024" alt="ChatGPT Image 15 mai 2026, 13_57_05 (1)" src="https://github.com/user-attachments/assets/ceecc42b-f03b-4742-a2f7-c7b66d6c58b9" />
+
+
+
 Wan2GP Agentic Skill allows Linux AI agents such as OpenClaw, Hermes, or any Python-based agent to generate videos through a Windows PC running Wan2GP on the local network.
 
 <img width="1672" height="941" alt="ChatGPT Image 15 mai 2026, 13_10_05" src="https://github.com/user-attachments/assets/dc939d3a-4bab-4d1e-bffd-3552fc23edfd" />
