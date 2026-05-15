@@ -1,3 +1,45 @@
+"""
+Wan2GP Python client library for AI agents.
+
+This module provides a high-level wrapper around the Wan2GP HTTP API
+to remotely generate videos from AI agents running on Linux, OpenClaw,
+Hermes, or any Python-compatible automation environment.
+
+Supported generation modes:
+- text to video (t2v)
+- image to video (i2v)
+- image start + image end to video (i2v_end)
+- audio to video (s2v)
+- audio + reference image to video (s2v_i2v)
+- audio + reference image + server-side LoRA (s2v_i2v_lora)
+
+Features:
+- server health check
+- fixed model information retrieval
+- job submission
+- job queue monitoring
+- detailed job status formatting
+- automatic wait until completion
+- automatic MP4 download
+- simple high-level generate_video() helper for agents
+
+Authentication is handled through:
+- WAN2GP_URL
+- WAN2GP_TOKEN
+
+Example:
+    result = generate_video(
+        mode="t2v",
+        prompt="A cinematic man walking in New York",
+        duration_seconds=5,
+        output_path="./output/video.mp4"
+    )
+
+Designed for agent integration where the AI submits jobs,
+tracks progress, and retrieves generated files automatically.
+"""
+
+
 import os
 import time
 import requests
