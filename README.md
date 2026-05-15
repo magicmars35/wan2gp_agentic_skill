@@ -1,33 +1,80 @@
+# Wan2GP Agentic Skill
 
-# Wan2GP Agentic Skill (LTX 2.3 Distilled 1.1)
+Wan2GP Agentic Skill allows Linux AI agents such as OpenClaw, Hermes, or any Python-based agent to generate videos through a Windows PC running Wan2GP on the local network.
 
-Wan2GP Agentic Skill is a small LAN-oriented integration layer that allows AI agents to generate videos through a Windows PC running Wan2GP.
-
-The goal is simple:
+The concept is simple:
 
 ```text
-AI Agent on Linux
-        |
-        | HTTP API
-        v
-Windows PC running Wan2GP
-        |
-        | GPU video generation
-        v
-Generated MP4 returned to the agent
+Linux AI Agent
+      |
+      | HTTP API
+      v
+Windows PC with Wan2GP + GPU
+      |
+      v
+Generated MP4 video
+      |
+      v
+Returned to the agent
 ````
 
-This project provides:
+The project contains two main parts:
 
-* a FastAPI server wrapping Wan2GP generation
-* a Python client skill for Linux agents
-* support for text to video
-* support for image to video
-* job queue monitoring
-* MP4 download after generation
-* fixed model configuration for safer agent usage
+1. a FastAPI server to install on the Wan2GP Windows machine
+2. a Python skill to install on the AI agent machines
 
-## Project structure
+## Features
+
+* text to video generation
+* image to video generation
+* start image + end image to video generation
+* audio to video generation
+* audio + reference image to video generation
+* audio + reference image + server-side LoRA generation
+* job queue tracking
+* job status monitoring
+* automatic MP4 download after generation
+* requester IP tracking
+* fixed Wan2GP model on the server side
+
+## V2 Update
+
+V2 adds the following generation modes:
+
+```text
+t2v              text to video
+i2v              image to video
+i2v_end          start image + end image to video
+s2v              sound/audio to video
+s2v_i2v          sound/audio + reference image to video
+s2v_i2v_lora     sound/audio + reference image + server-side LoRA
+```
+
+V2 also adds:
+
+* `requester_ip` in job data
+* `requester_user_agent` in job data
+* improved `/jobs` monitoring
+* a PHP monitoring page compatible with all V2 modes
+* an updated agent skill supporting all V2 modes
+
+## Fixed model
+
+The server is designed to use one fixed model:
+
+```text
+LTX-2 2.3 Distilled 1.1 22B
+```
+
+Internal Wan2GP model identifier:
+
+```text
+ltx2_22B_distilled_1_1
+```
+
+The model is intentionally locked on the server side to prevent agents from switching models or launching unexpected heavy generations.
+
+## Repository structure
 
 ```text
 wan2gp_agentic_skill/
@@ -37,140 +84,60 @@ wan2gp_agentic_skill/
 ├── wan2gp_server/
 │   ├── wan2gp_api_server.py
 │   ├── ltx2_template_t2v.json
-│   └── ltx2_template_i2v.json
+│   ├── ltx2_template_i2v.json
+│   ├── ltx2_template_i2v_end.json
+│   ├── ltx2_template_s2v.json
+│   ├── ltx2_template_s2v_i2v.json
+│   └── ltx2_template_s2v_i2v_lora.json
 │
-└── wan2gp_video_agent_skill/
-    ├── wan2gp_skill.py
-    └── SKILL.md
+├── wan2gp_video_agent_skill/
+│   ├── wan2gp_skill.py
+│   └── SKILL.md
+│
+└── php_monitor/
+    ├── wan2gp_queue.php
+    └── wan2gp_download.php
 ```
 
-## What it does
+The exact folder structure may vary, but the logic is:
 
-The server exposes a local HTTP API in front of Wan2GP.
+* `wan2gp_server` goes on the Windows PC running Wan2GP
+* `wan2gp_video_agent_skill` goes on the Linux AI agent machines
+* `php_monitor` can be installed on a Linux web server to visually monitor the queue
 
-AI agents can call the API to:
+## Installation part 1: Wan2GP server
 
-1. submit a video generation job
-2. receive a `job_id`
-3. check the job status
-4. wait until the video is complete
-5. download the generated MP4
-6. send the MP4 back to Discord, Telegram, WhatsApp, OpenClaw, Hermes, or any other messaging platform
+This part must be done on the Windows PC where Wan2GP is installed.
 
-## Intended architecture
+Example Wan2GP folder:
 
 ```text
-Linux agent OpenClaw / Hermes
-        |
-        | POST /generate/t2v
-        | POST /generate/i2v
-        | GET  /jobs/{job_id}
-        | GET  /download/{job_id}/{filename}
-        v
-Windows PC
-Wan2GP API server
-        |
-        v
-Wan2GP Python API
-        |
-        v
-NVIDIA GPU
-        |
-        v
-MP4 output
+G:\APPS\Wan2GP
 ```
 
-## Main use case
-
-This project is useful when you have:
-
-* one powerful Windows PC with GPU and Wan2GP installed
-* several AI agents running on Linux machines
-* a local network connecting them
-* a need for agents to generate videos without installing Wan2GP locally
-
-
-## Fixed model
-
-The current setup is designed for one fixed model:
+Copy the files from `wan2gp_server` into the Wan2GP installation folder:
 
 ```text
-LTX-2 2.3 Distilled 1.1 22B
+wan2gp_api_server.py
+ltx2_template_t2v.json
+ltx2_template_i2v.json
+ltx2_template_i2v_end.json
+ltx2_template_s2v.json
+ltx2_template_s2v_i2v.json
+ltx2_template_s2v_i2v_lora.json
 ```
 
-Internal Wan2GP model type:
+The JSON files are templates exported from the Wan2GP Web UI.
 
-```text
-ltx2_22B_distilled_1_1
-```
+Each generation mode uses its own template to avoid internal configuration conflicts.
 
-This is intentional.
-
-Agents should not dynamically switch models. Keeping the model fixed reduces mistakes, prevents unexpected VRAM usage, and makes behavior more predictable.
-
-## Requirements
-
-### Windows Wan2GP server
-
-You need:
-
-* Windows
-* Wan2GP already installed
-* Python environment used by Wan2GP
-* NVIDIA GPU supported by your Wan2GP setup
-* FastAPI dependencies installed in the Wan2GP Python environment
-
-Install server dependencies:
+Install the API dependencies inside the same Python environment used by Wan2GP:
 
 ```powershell
 pip install fastapi uvicorn python-multipart pydantic
 ```
 
-### Linux agent side
-
-You need:
-
-```bash
-pip install requests
-```
-
-## Server installation
-
-Copy the server files into your Wan2GP installation folder.
-
-Example:
-
-```text
-G:\APPS\Wan2GP\
-```
-
-Expected files:
-
-```text
-G:\APPS\Wan2GP\wan2gp_api_server.py
-G:\APPS\Wan2GP\ltx2_template_t2v.json
-G:\APPS\Wan2GP\ltx2_template_i2v.json
-```
-
-
-## Why two templates?
-
-Wan2GP stores mode-specific settings in its exported JSON.
-
-A template exported from an image to video job may still require a start image even if the script clears `image_start`.
-
-For this reason, the project uses two separate templates:
-
-```text
-ltx2_template_t2v.json
-ltx2_template_i2v.json
-```
-
-This avoids mode confusion and makes the API more reliable.
-
-## Start the server
-
-On the Windows Wan2GP PC:
+Start the server:
 
 ```powershell
 Set-Location "G:\APPS\Wan2GP"
@@ -178,7 +145,7 @@ Set-Location "G:\APPS\Wan2GP"
 python wan2gp_api_server.py
 ```
 
-Depending on your Wan2GP installation, the virtual environment path may differ.
+Depending on your Wan2GP installation, the virtual environment path may be different.
 
 Alternative examples:
 
@@ -192,21 +159,13 @@ or:
 .\installer_files\env\Scripts\activate
 ```
 
-The API should start on:
-
-```text
-http://0.0.0.0:7861
-```
-
-From the Windows PC, test:
+Test locally:
 
 ```powershell
 Invoke-RestMethod -Uri "http://127.0.0.1:7861/health"
 ```
 
-## Network access
-
-If agents run on other machines in the LAN, open the Windows firewall port:
+If your agents are on the LAN, open the Windows firewall port:
 
 ```powershell
 New-NetFirewallRule `
@@ -217,186 +176,17 @@ New-NetFirewallRule `
   -Action Allow
 ```
 
-Example server IP:
-
-```text
-192.168.1.53
-```
-
-Agent-side base URL:
+Example server URL for agents:
 
 ```text
 http://192.168.1.53:7861
 ```
 
-## Authentication
+## Installation part 2: AI agent skill
 
-The API uses a Bearer token.
+This part must be done on the Linux machines running the agents.
 
-Example header:
-
-```text
-Authorization: Bearer YOUR_SECRET_TOKEN
-```
-
-Do not expose the API directly on the Internet.
-
-Recommended deployment:
-
-```text
-LAN only
-or
-VPN only
-```
-
-## API endpoints
-
-### Health check
-
-```http
-GET /health
-```
-
-Returns basic API status.
-
-### Model info
-
-```http
-GET /model
-```
-
-Requires authorization.
-
-Returns the fixed model information.
-
-### List jobs
-
-```http
-GET /jobs
-```
-
-Requires authorization.
-
-Returns known jobs stored in server memory.
-
-Important: job history is lost when the API server restarts.
-
-### Get job status
-
-```http
-GET /jobs/{job_id}
-```
-
-Requires authorization.
-
-Returns job status, progress, queue position, generated files, and errors.
-
-Possible job statuses:
-
-```text
-queued
-running
-completed
-failed
-```
-
-Short statuses:
-
-```text
-Q = queued
-R = running
-C = completed
-F = failed
-```
-
-### Text to video
-
-```http
-POST /generate/t2v
-```
-
-JSON body example:
-
-```json
-{
-  "prompt": "A cinematic shot of a robot walking under neon rain",
-  "duration_seconds": 3,
-  "fps": 24,
-  "resolution": "1280x720",
-  "num_inference_steps": 8
-}
-```
-
-Optional fields:
-
-```json
-{
-  "seed": 123456,
-  "negative_prompt": "blurry, low quality"
-}
-```
-
-### Image to video
-
-```http
-POST /generate/i2v
-```
-
-Multipart form fields:
-
-```text
-prompt
-image
-duration_seconds
-fps
-resolution
-num_inference_steps
-seed
-negative_prompt
-```
-
-Example with curl:
-
-```bash
-curl -X POST "http://192.168.1.53:7861/generate/i2v" \
-  -H "Authorization: Bearer YOUR_SECRET_TOKEN" \
-  -F "prompt=A cinematic close-up portrait, subtle natural movement, warm daylight" \
-  -F "duration_seconds=3" \
-  -F "fps=24" \
-  -F "resolution=1280x720" \
-  -F "num_inference_steps=8" \
-  -F "image=@/tmp/image.png"
-```
-
-### Download result
-
-```http
-GET /download/{job_id}/{filename}
-```
-
-Requires authorization.
-
-The job status response contains `download_urls` once generation is complete.
-
-Example:
-
-```json
-{
-  "download_urls": [
-    "/download/abc-123/video.mp4"
-  ]
-}
-```
-
-Full URL:
-
-```text
-http://192.168.1.53:7861/download/abc-123/video.mp4
-```
-
-## Agent skill installation
-
-Copy the agent skill folder to your agent workspace.
+Copy the `wan2gp_video_agent_skill` folder into your agent skill workspace.
 
 Example for OpenClaw:
 
@@ -405,20 +195,43 @@ mkdir -p ~/.openclaw/workspace/skills/wan2gp_video
 cp wan2gp_video_agent_skill/* ~/.openclaw/workspace/skills/wan2gp_video/
 ```
 
-Install Python dependency:
+Install the Python dependency:
 
 ```bash
 pip install requests
 ```
 
-Set environment variables:
+Configure the server URL and token:
 
 ```bash
 export WAN2GP_URL="http://192.168.1.53:7861"
 export WAN2GP_TOKEN="YOUR_SECRET_TOKEN"
 ```
 
-## Python usage
+It is recommended to use environment variables instead of hardcoding the token in the Python file.
+
+## What to tell the agents
+
+Add this to the system prompt or skill configuration of your agent:
+
+```text
+You have access to a skill called Wan2GP Video.
+
+Use this skill whenever the user asks for video generation.
+
+Choose the mode automatically:
+
+- text only: t2v
+- image + prompt: i2v
+- start image + end image + prompt: i2v_end
+- audio + prompt: s2v
+- audio + image + prompt: s2v_i2v
+- audio + image + explicit LoRA request: s2v_i2v_lora
+
+After submitting the job, retrieve the job_id, monitor progress with get_job_status, wait until the job is complete, download the generated MP4, then return the video file to the user.
+```
+
+## Agent usage examples
 
 ### Text to video
 
@@ -427,7 +240,7 @@ from wan2gp_skill import generate_video
 
 result = generate_video(
     mode="t2v",
-    prompt="A cinematic shot of a robot walking under neon rain, realistic lighting",
+    prompt="A cinematic shot of a small robot walking under neon rain, realistic lighting",
     duration_seconds=3,
     output_path="/tmp/robot.mp4",
     verbose=True,
@@ -443,182 +256,115 @@ from wan2gp_skill import generate_video
 
 result = generate_video(
     mode="i2v",
-    image_path="/tmp/image.png",
     prompt="A cinematic close-up portrait, subtle natural movement, warm daylight",
+    image_path="/tmp/reference.png",
     duration_seconds=3,
-    output_path="/tmp/portrait.mp4",
+    output_path="/tmp/i2v.mp4",
     verbose=True,
 )
 
 print(result["saved_file"])
 ```
 
-### Submit a job without waiting
+### Audio + image + server-side LoRA
 
 ```python
-from wan2gp_skill import submit_text_to_video
+from wan2gp_skill import generate_video
 
-result = submit_text_to_video(
-    prompt="A futuristic hospital corridor, cinematic lighting",
-    duration_seconds=3,
+result = generate_video(
+    mode="s2v_i2v_lora",
+    prompt="The woman speaks in French in front of the camera with perfect lip sync",
+    image_path="/tmp/reference.png",
+    audio_path="/tmp/voice.mp3",
+    duration_seconds=6,
+    output_path="/tmp/result.mp4",
+    verbose=True,
 )
 
-print(result["job_id"])
+print(result["saved_file"])
 ```
 
-### Check job status
-
-```python
-from wan2gp_skill import get_job_status, format_job_status
-
-job = get_job_status("YOUR_JOB_ID")
-
-print(format_job_status(job))
-```
-
-### Download result manually
-
-```python
-from wan2gp_skill import get_job_status, download_first_generated_file
-
-job = get_job_status("YOUR_JOB_ID")
-
-download_first_generated_file(
-    job=job,
-    output_path="/tmp/generated_video.mp4",
-)
-```
-
-## Recommended agent behavior
-
-When a user asks for a video:
-
-1. decide whether the request is text to video or image to video
-2. build or improve the prompt
-3. call `submit_text_to_video()` or `submit_image_to_video()`
-4. store the returned `job_id`
-5. poll `get_job_status(job_id)`
-6. when status is `completed`, download the MP4
-7. send the MP4 back to the user through the messaging platform
-
-## Queue behavior
-
-The server processes jobs sequentially.
-
-This avoids multiple agents launching several GPU-heavy generations at the same time.
-
-Each job exposes:
+## Main endpoints
 
 ```text
-job_id
-status
-short_status
-queue_position
-progress
-phase
-current_step
-total_steps
-message
-download_urls
-errors
+GET  /health
+GET  /model
+GET  /jobs
+GET  /jobs/{job_id}
+GET  /download/{job_id}/{filename}
+
+POST /generate/t2v
+POST /generate/i2v
+POST /generate/i2v_end
+POST /generate/s2v
+POST /generate/s2v_i2v
+POST /generate/s2v_i2v_lora
 ```
 
-## Security notes
+Protected endpoints require a Bearer token:
 
-This project is intended for trusted local network use.
+```text
+Authorization: Bearer YOUR_SECRET_TOKEN
+```
+
+## PHP monitoring page
+
+The PHP monitoring page can query `/jobs` and display:
+
+* job status
+* generation type
+* progress
+* requester machine
+* requester IP
+* real generation duration
+* input files
+* MP4 download link
+
+Quick installation example on Debian/Ubuntu:
+
+```bash
+sudo apt update
+sudo apt install -y apache2 php php-curl
+sudo cp php_monitor/*.php /var/www/html/
+```
+
+Then open:
+
+```text
+http://YOUR_PHP_SERVER_IP/wan2gp_queue.php
+```
+
+## Important notes
+
+Jobs are stored in memory on the API server.
+
+If the API server is restarted, previous `job_id` values will no longer be available.
+
+The Wan2GP API server must be running before agents can generate videos.
+
+The first generation after startup may be slower if the model has to be loaded into VRAM.
+
+## Security
+
+This project is designed for local network or VPN usage.
 
 Do not expose the Wan2GP API directly to the public Internet.
 
-Recommended protections:
+Recommendations:
 
-* keep it LAN-only
-* use a strong Bearer token
-* restrict Windows firewall rules to agent IP addresses
-* rotate the token if it has been shared
-* avoid committing real tokens to GitHub
-
-Use placeholders in public files:
-
-```text
-YOUR_SECRET_TOKEN
-```
-
-## VRAM behavior
-
-Wan2GP may keep models loaded in VRAM between generations for better performance.
-
-This is good for speed but keeps GPU memory occupied.
-
-Possible strategies:
-
-* keep the server always warm for fast generation
-* add a manual unload endpoint
-* clean CUDA cache after inactivity
-* restart the API process after a long idle delay for full VRAM release
-
-The most reliable way to fully release VRAM is to stop the Python process that loaded the model.
-
-## Troubleshooting
-
-### `Job not found`
-
-Possible causes:
-
-* wrong `job_id`
-* empty `job_id`
-* server was restarted
-* job history was lost because jobs are stored in memory
-
-### `You must provide a Start Image`
-
-You are probably using an image to video template for a text to video job.
-
-Fix:
-
-* export a real text to video template from the Wan2GP UI
-* save it as `ltx2_template_t2v.json`
-
-### The agent cannot reach the API
-
-Check from Linux:
-
-```bash
-curl http://192.168.1.53:7861/health
-```
-
-Then check authenticated access:
-
-```bash
-curl -H "Authorization: Bearer YOUR_SECRET_TOKEN" \
-  http://192.168.1.53:7861/model
-```
-
-### MP4 download fails from browser
-
-The `/download` endpoint requires the Authorization header.
-
-A normal browser link cannot add that header automatically.
-
-Use:
-
-* the Python skill download function
-* curl with the Authorization header
-* a small authenticated proxy page if needed
+* use a long Bearer token
+* do not publish real tokens on GitHub
+* restrict the Windows firewall to agent IP addresses if possible
+* keep Wan2GP LAN-only
+* use `YOUR_SECRET_TOKEN` in public files
 
 ## Disclaimer
 
-This project is an integration wrapper around Wan2GP.
+This project is a wrapper around Wan2GP.
 
-It does not include Wan2GP itself, model weights, or any third-party model files.
+It does not include Wan2GP, AI models, model weights, LoRA files, or any third-party generation assets.
 
-Make sure you respect the licenses and terms of the software and models you use.
+Respect the licenses and terms of use of Wan2GP, the models, and the LoRA files you use.
 
-## Repository
-
-GitHub:
-
-```text
-https://github.com/magicmars35/wan2gp_agentic_skill
 ```
-
-
+```
