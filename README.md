@@ -157,7 +157,8 @@ Start the server:
 
 
 Again : Only run this API server script. It is NOT necessary to run the WAN2GP legacy program (wgp.py) 
-Use conda Wan2gp offical setup inscruction to enter the Wan2GP python environment.
+
+- Use conda Wan2gp offical setup inscruction to enter the Wan2GP python environment.
 
 (I used  venv to install WAN2GP).
 
@@ -171,7 +172,7 @@ python wan2gp_api_server.py
 
 Depending on your Wan2GP installation, the virtual environment path may be different.
 
-If your agents are on the LAN, open the Windows firewall port:
+- (optional) If your agents are on the LAN, open the Windows firewall port:
 
 ```powershell
 New-NetFirewallRule `
