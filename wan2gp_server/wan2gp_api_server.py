@@ -33,7 +33,7 @@ TEMPLATE_FILES = {
 OUTPUT_DIR = WAN2GP_ROOT / "api_outputs"
 INPUT_DIR = WAN2GP_ROOT / "api_inputs"
 
-API_TOKEN = "HGH7EPBCE51vureBCBUEBCE75678edfv9HUGBC7E"
+API_TOKEN = "my-super-token-to-change"
 
 FIXED_MODEL_TYPE = "ltx2_22B_distilled_1_1"
 FIXED_BASE_MODEL_TYPE = "ltx2_22B"
