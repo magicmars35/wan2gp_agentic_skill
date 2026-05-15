@@ -191,6 +191,21 @@ http://192.168.1.53:7861
 
 ## Installation part 2: AI agent skill
 
+
+### Method 1: let your agent install the skill from GitHub
+
+The simplest method is to give your AI agent the URL of this GitHub repository and ask it to install the skill itself.
+
+Example instruction to give to your agent:
+
+```text
+Install the Wan2GP video generation skill from this GitHub repository.
+Read the README, copy the agent skill files into your skill workspace, and make the skill available for use.
+```
+
+
+### Method 2: manual installation 
+
 This part must be done on the Linux machines running the agents.
 
 Copy the `wan2gp_video_agent_skill` folder into your agent skill workspace.
