@@ -95,12 +95,7 @@ wan2gp_agentic_skill/
 │
 ├── wan2gp_server/
 │   ├── wan2gp_api_server.py
-│   ├── ltx2_template_t2v.json
-│   ├── ltx2_template_i2v.json
-│   ├── ltx2_template_i2v_end.json
-│   ├── ltx2_template_s2v.json
-│   ├── ltx2_template_s2v_i2v.json
-│   └── ltx2_template_s2v_i2v_lora.json
+│   └── ltx2_template_universal.json
 │
 ├── wan2gp_video_agent_skill/
 │   ├── wan2gp_skill.py
@@ -125,22 +120,16 @@ Example Wan2GP folder:
 G:\APPS\Wan2GP
 ```
 
-1. Copy all the JSON  files from `wan2gp_server` into the Wan2GP installation folder.
+1. Copy  the JSON  file `ltx2_template_universal.json`  from  `wan2gp_server` into the Wan2GP installation folder.
 2. Copy also `wan2gp_api_server.py` into the Wan2GP installation folder
 
 ```text
 wan2gp_api_server.py
-ltx2_template_t2v.json
-ltx2_template_i2v.json
-ltx2_template_i2v_end.json
-ltx2_template_s2v.json
-ltx2_template_s2v_i2v.json
-ltx2_template_s2v_i2v_lora.json
+ltx2_template_universal.json
 ```
 
-The JSON files are templates exported from the Wan2GP Web UI.
+The JSON file is a template exported from the Wan2GP Web UI.
 
-Each generation mode uses its own template to avoid internal configuration conflicts.
 Install the API dependencies inside the same Python environment used by Wan2GP:
 
 ```powershell
