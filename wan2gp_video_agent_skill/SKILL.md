@@ -1,311 +1,361 @@
-````md
 ---
 name: wan2gp_video
-description: Wan2GP V2 video generation via HTTP API on Windows PC (.53) — t2v, i2v, i2v_end, s2v, s2v_i2v, s2v_i2v_lora modes
+description: Generate and monitor Wan2GP LTX 2.3 videos through the LAN API server. Supports t2v, i2v, i2v_end, s2v, s2v_i2v, s2v_i2v_lora, universal template mode, queue monitoring, MP4 download and browser monitor URL.
 ---
 
 # Wan2GP Video Skill
 
 ## Role
 
-This skill allows a Linux OpenClaw or Hermes agent to generate videos through the Wan2GP server installed on a Windows PC on the local network.
+This skill lets an OpenClaw, Hermes or coding agent generate videos through a Wan2GP server running on a Windows PC on the LAN.
 
-The Wan2GP server runs at:
+The agent does not generate the video locally. It sends a job to the Wan2GP API server, follows the queue, waits for completion when requested, and downloads the generated MP4.
 
-```text
+Default server:
+
+```bash
 http://192.168.1.53:7861
-````
+```
 
-The model used server-side is fixed:
+Default model on the server:
 
 ```text
 LTX-2 2.3 Distilled 1.1 22B
 ```
 
-Internal model identifier:
+Internal model id:
 
 ```text
 ltx2_22B_distilled_1_1
 ```
 
----
+## Important server-side infos
 
-## Principle
-
-The agent does not generate the video itself.
-
-It sends an HTTP request to the Wan2GP Windows PC, waits for the job to complete, then downloads the generated MP4 file.
-
-Normal workflow:
+The server uses one universal template:
 
 ```text
-Linux Agent
-  -> POST /generate/...
-  -> receives job_id
-  -> GET /jobs/{job_id}
-  -> waits until status = completed
-  -> GET /download/{job_id}/{filename}
-  -> retrieves the MP4
+G:\APPS\Wan2GP\ltx2_template_universal.json
 ```
 
----
-
-## Available Modes
-
-V2 supports six generation modes:
+The server then applies mode controls internally:
 
 ```text
-t2v
-i2v
-i2v_end
-s2v
-s2v_i2v
-s2v_i2v_lora
+t2v            text only
+i2v            start image
+i2v_end        start image + end image
+s2v            audio only
+s2v_i2v        audio + reference image
+s2v_i2v_lora   audio + reference image + LoRA
 ```
 
----
+The agent does not need to know the template details. It only chooses the mode and sends the required files.
 
-### t2v
+## Built-in monitor page
 
-Text to video.
+The Wan2GP API server can also serve the monitoring web page directly.
 
-Server endpoint:
+Use this helper from Python:
+
+```python
+from wan2gp_skill import monitor_url
+
+print(monitor_url())
+```
+
+Default URL format:
 
 ```text
-POST /generate/t2v
+http://192.168.1.53:7861/monitor?token=TOKEN_SECRET
 ```
 
-Required parameters:
+Alias:
 
 ```text
-prompt
+http://192.168.1.53:7861/ui?token=TOKEN_SECRET
 ```
 
-Optional parameters:
+The monitor shows:
 
-```text
-duration_seconds
-fps
-resolution
-num_inference_steps
-seed
-negative_prompt
-```
+- API status
+- current model
+- total jobs
+- active jobs
+- completed jobs
+- failed jobs
+- mode counts
+- queue position
+- job progress
+- prompt excerpt
+- input files
+- LoRA information
+- generated MP4 download link
 
----
+## Environment variables
 
-### i2v
-
-Image to video using a starting image.
-
-Server endpoint:
-
-```text
-POST /generate/i2v
-```
-
-Required parameters:
-
-```text
-prompt
-image_path
-```
-
-Optional parameters:
-
-```text
-duration_seconds
-fps
-resolution
-num_inference_steps
-seed
-negative_prompt
-```
-
----
-
-### i2v_end
-
-Image to video using both a starting image and an ending image.
-
-Server endpoint:
-
-```text
-POST /generate/i2v_end
-```
-
-Required parameters:
-
-```text
-prompt
-image_start_path
-image_end_path
-```
-
-Optional parameters:
-
-```text
-duration_seconds
-fps
-resolution
-num_inference_steps
-seed
-negative_prompt
-```
-
----
-
-### s2v
-
-Audio to video without reference image.
-
-Server endpoint:
-
-```text
-POST /generate/s2v
-```
-
-Required parameters:
-
-```text
-prompt
-audio_path
-```
-
-Optional parameters:
-
-```text
-duration_seconds
-fps
-resolution
-num_inference_steps
-seed
-negative_prompt
-```
-
----
-
-### s2v_i2v
-
-Audio to video with reference image.
-
-Server endpoint:
-
-```text
-POST /generate/s2v_i2v
-```
-
-Required parameters:
-
-```text
-prompt
-image_path
-audio_path
-```
-
-Optional parameters:
-
-```text
-duration_seconds
-fps
-resolution
-num_inference_steps
-seed
-negative_prompt
-```
-
----
-
-### s2v_i2v_lora
-
-Audio to video with reference image and server-side LoRA.
-
-Server endpoint:
-
-```text
-POST /generate/s2v_i2v_lora
-```
-
-Required parameters:
-
-```text
-prompt
-image_path
-audio_path
-```
-
-Optional parameters:
-
-```text
-duration_seconds
-fps
-resolution
-num_inference_steps
-seed
-negative_prompt
-```
-
-The LoRA is not dynamically selected by the agent.
-
-It is defined server-side in:
-
-```text
-ltx2_template_s2v_i2v_lora.json
-```
-
----
-
-## Configuration
-
-The skill supports two optional environment variables:
-
-```bash
-WAN2GP_URL="http://192.168.1.53:7861"
-WAN2GP_TOKEN="TOKEN_SECRET"
-```
-
-If not defined, the default values from `wan2gp_skill.py` are used.
-
-It is strongly recommended to define these variables in the agent environment rather than hardcoding the token.
-
-Example:
+Recommended configuration:
 
 ```bash
 export WAN2GP_URL="http://192.168.1.53:7861"
 export WAN2GP_TOKEN="TOKEN_SECRET"
 ```
 
----
+Optional defaults:
 
-## Available Functions
+```bash
+export WAN2GP_DEFAULT_RESOLUTION="1280x720"
+export WAN2GP_DEFAULT_FPS="24"
+export WAN2GP_DEFAULT_DURATION_SECONDS="3"
+export WAN2GP_DEFAULT_STEPS="8"
+export WAN2GP_DEFAULT_POLL_SECONDS="5"
+export WAN2GP_REQUEST_TIMEOUT="60"
+export WAN2GP_UPLOAD_TIMEOUT="180"
+export WAN2GP_DOWNLOAD_TIMEOUT="600"
+```
+
+Avoid hardcoding secrets in agent prompts. Prefer environment variables.
+
+## Basic flow
+
+```text
+Agent
+  -> POST /generate/...
+  -> receives job_id
+  -> GET /jobs/{job_id}
+  -> waits until status is completed or failed
+  -> GET /download/{job_id}/{filename}
+  -> downloads MP4
+```
+
+For human monitoring:
+
+```text
+Browser
+  -> /monitor?token=TOKEN_SECRET
+```
+
+## Python module
+
+The implementation file is:
+
+```text
+wan2gp_skill.py
+```
+
+Import examples:
+
+```python
+from wan2gp_skill import generate_video, submit_video_job, get_job_status, wait_for_job
+```
+
+## Modes
+
+### t2v
+
+Text to video.
+
+Required:
+
+- prompt
+
+Optional:
+
+- duration_seconds
+- fps
+- resolution
+- num_inference_steps
+- seed
+- negative_prompt
+
+Endpoint:
+
+```text
+POST /generate/t2v
+```
+
+### i2v
+
+Image to video with a start image.
+
+Required:
+
+- prompt
+- image_path
+
+Optional:
+
+- duration_seconds
+- fps
+- resolution
+- num_inference_steps
+- seed
+- negative_prompt
+
+Endpoint:
+
+```text
+POST /generate/i2v
+```
+
+### i2v_end
+
+Image to video with a start image and an end image.
+
+Required:
+
+- prompt
+- image_start_path
+- image_end_path
+
+Optional:
+
+- duration_seconds
+- fps
+- resolution
+- num_inference_steps
+- seed
+- negative_prompt
+
+Endpoint:
+
+```text
+POST /generate/i2v_end
+```
+
+### s2v
+
+Audio to video without reference image.
+
+Required:
+
+- prompt
+- audio_path
+
+Optional:
+
+- duration_seconds
+- fps
+- resolution
+- num_inference_steps
+- seed
+- negative_prompt
+
+Endpoint:
+
+```text
+POST /generate/s2v
+```
+
+### s2v_i2v
+
+Audio to video with a reference image.
+
+Required:
+
+- prompt
+- image_path
+- audio_path
+
+Optional:
+
+- duration_seconds
+- fps
+- resolution
+- num_inference_steps
+- seed
+- negative_prompt
+
+Endpoint:
+
+```text
+POST /generate/s2v_i2v
+```
+
+### s2v_i2v_lora
+
+Audio to video with a reference image and LoRA.
+
+Required:
+
+- prompt
+- image_path
+- audio_path
+
+Optional:
+
+- duration_seconds
+- fps
+- resolution
+- num_inference_steps
+- seed
+- negative_prompt
+- lora_url
+- lora_multiplier
+
+Endpoint:
+
+```text
+POST /generate/s2v_i2v_lora
+```
+
+If `lora_url` is not provided, the server default LoRA is used.
+
+## Main functions
 
 ### health()
 
-Checks whether the Wan2GP server is responding.
+Checks whether the server responds.
 
----
+```python
+from wan2gp_skill import health
+
+print(health())
+```
 
 ### model_info()
 
-Returns information about the active video model and available modes.
+Returns model and mode information from the server.
 
----
+```python
+from wan2gp_skill import model_info
+
+print(model_info())
+```
+
+### monitor_url()
+
+Returns the browser monitor URL with token query auth.
+
+```python
+from wan2gp_skill import monitor_url
+
+print(monitor_url())
+```
 
 ### list_jobs()
 
-Lists known jobs on the Wan2GP server.
+Lists all known jobs in server memory.
 
-Important:
+```python
+from wan2gp_skill import list_jobs
 
-Jobs are stored in server memory only.
+jobs = list_jobs()
+print(jobs["count"])
+```
 
-If the Wan2GP API server is restarted, previous `job_id` entries disappear.
+### active_jobs()
 
----
+Returns queued and running jobs.
+
+```python
+from wan2gp_skill import active_jobs
+
+for job in active_jobs():
+    print(job["job_id"], job["status"], job.get("queue_position"))
+```
 
 ### get_job_status(job_id)
 
-Returns detailed job status.
+Gets detailed status for one job.
 
 Important fields:
 
@@ -325,254 +375,53 @@ download_urls
 errors
 ```
 
----
-
 ### format_job_status(job)
 
-Formats a job status into readable text for Discord, Telegram, WhatsApp, etc.
+Formats a job as readable text for chat, logs or notifications.
 
----
+```python
+from wan2gp_skill import get_job_status, format_job_status
 
-### submit_text_to_video(...)
-
-Starts a text-to-video generation.
-
-Parameters:
-
-```text
-prompt
-duration_seconds
-fps
-resolution
-num_inference_steps
-seed
-negative_prompt
+job = get_job_status("JOB_ID")
+print(format_job_status(job))
 ```
 
-Returns immediately:
+### submit_video_job(...)
 
-```text
-job_id
+Submits a job and returns immediately.
+
+This is useful when agents need to start work, report the job id, and let the user follow it through `/monitor`.
+
+```python
+from wan2gp_skill import submit_video_job, monitor_url
+
+result = submit_video_job(
+    prompt="A cinematic robot walking under neon rain, realistic reflections",
+    mode="t2v",
+    duration_seconds=4,
+)
+
+print(result["job_id"])
+print(monitor_url())
 ```
-
----
-
-### submit_image_to_video(...)
-
-Starts an image-to-video generation.
-
-Parameters:
-
-```text
-image_path
-prompt
-duration_seconds
-fps
-resolution
-num_inference_steps
-seed
-negative_prompt
-```
-
-Returns immediately:
-
-```text
-job_id
-```
-
----
-
-### submit_image_to_video_with_end_image(...)
-
-Starts an image-to-video generation with start and end images.
-
-Parameters:
-
-```text
-image_start_path
-image_end_path
-prompt
-duration_seconds
-fps
-resolution
-num_inference_steps
-seed
-negative_prompt
-```
-
-Returns immediately:
-
-```text
-job_id
-```
-
----
-
-### submit_sound_to_video(...)
-
-Starts an audio-to-video generation without image.
-
-Parameters:
-
-```text
-audio_path
-prompt
-duration_seconds
-fps
-resolution
-num_inference_steps
-seed
-negative_prompt
-```
-
-Returns immediately:
-
-```text
-job_id
-```
-
----
-
-### submit_sound_to_video_with_image(image_path, audio_path, prompt, ...)
-
-Important note:
-
-If `image_path` is an HTTP URL, for example:
-
-```text
-http://192.168.1.69/sources/images_ref/alya.png
-```
-
-the function automatically downloads it into `/tmp/` before sending it to Wan2GP.
-
-No manual preparation required.
-
-Starts an audio-to-video generation with reference image.
-
-Parameters:
-
-```text
-image_path
-audio_path
-prompt
-duration_seconds
-fps
-resolution
-num_inference_steps
-seed
-negative_prompt
-```
-
-Returns immediately:
-
-```text
-job_id
-```
-
----
-
-### submit_sound_to_video_with_image_and_lora(...)
-
-Starts an audio-to-video generation with reference image and server-side LoRA.
-
-Parameters:
-
-```text
-image_path
-audio_path
-prompt
-duration_seconds
-fps
-resolution
-num_inference_steps
-seed
-negative_prompt
-```
-
-Returns immediately:
-
-```text
-job_id
-```
-
----
-
-### wait_for_job(job_id)
-
-Waits for job completion.
-
-Returns the final completed job object.
-
-Raises an error if the job fails.
-
----
-
-### download_file(download_url, output_path)
-
-Downloads a generated file from Wan2GP.
-
----
-
-### download_first_generated_file(job, output_path)
-
-Downloads the first generated file from a completed job.
-
----
 
 ### generate_video(...)
 
-High-level convenience function.
+High-level function for agents.
 
-Performs everything in a single call:
+It can:
 
-1. submit the job
-2. wait for completion
-3. download the MP4 if `output_path` is provided
-
-Parameters:
-
-```text
-mode
-prompt
-image_path
-image_start_path
-image_end_path
-audio_path
-duration_seconds
-fps
-resolution
-num_inference_steps
-seed
-negative_prompt
-poll_seconds
-output_path
-verbose
-```
-
-Supported mode values:
-
-```text
-t2v
-i2v
-i2v_end
-s2v
-s2v_i2v
-s2v_i2v_lora
-```
-
----
-
-## Examples
-
-### Text to Video
+1. choose the mode automatically
+2. submit the job
+3. wait for completion
+4. download the MP4 if `output_path` is provided
 
 ```python
 from wan2gp_skill import generate_video
 
 result = generate_video(
-    mode="t2v",
-    prompt="A cinematic shot of a small robot walking under neon rain, realistic lighting",
-    duration_seconds=3,
+    prompt="A cinematic robot walking under neon rain, realistic reflections",
+    duration_seconds=4,
     output_path="/tmp/robot.mp4",
     verbose=True,
 )
@@ -580,38 +429,82 @@ result = generate_video(
 print(result["saved_file"])
 ```
 
----
-
-### Image to Video
+Use `wait=False` to submit only:
 
 ```python
 from wan2gp_skill import generate_video
 
 result = generate_video(
-    mode="i2v",
-    prompt="A cinematic close-up portrait, subtle natural movement, warm daylight",
-    image_path="/tmp/image_depart.png",
+    prompt="A cinematic establishing shot of a futuristic hospital corridor",
+    mode="t2v",
     duration_seconds=3,
-    output_path="/tmp/portrait.mp4",
+    wait=False,
+)
+
+print(result["job_id"])
+print(result["monitor_url"])
+```
+
+## Automatic mode choice
+
+If `mode` is omitted, `generate_video()` and `submit_video_job()` choose automatically:
+
+```text
+prompt only                              -> t2v
+image_path                              -> i2v
+image_start_path + image_end_path       -> i2v_end
+audio_path                              -> s2v
+image_path + audio_path                 -> s2v_i2v
+image_path + audio_path + use_lora=True -> s2v_i2v_lora
+```
+
+Do not provide incompatible combinations. For example, `image_start_path + image_end_path + audio_path` is not supported by this API.
+
+## Examples
+
+### Text to video
+
+```python
+from wan2gp_skill import generate_video
+
+result = generate_video(
+    prompt="A slow cinematic tracking shot through a futuristic hospital corridor at night, blue emergency lights reflecting on polished floors, subtle fog, realistic camera movement",
+    duration_seconds=4,
+    output_path="/tmp/hospital_corridor.mp4",
     verbose=True,
 )
 
 print(result["saved_file"])
 ```
 
----
+### Image to video
 
-### Start + End Image
+For Image to Video, do not redescribe everything visible in the reference image. Describe motion, camera, lighting changes and action.
 
 ```python
 from wan2gp_skill import generate_video
 
 result = generate_video(
-    mode="i2v_end",
-    prompt="The woman slowly turns toward the camera, cinematic motion",
+    image_path="/tmp/reference.png",
+    prompt="The camera slowly pushes in. The subject breathes naturally, blinks once, and turns slightly toward the window light. The background remains stable with shallow depth of field.",
+    duration_seconds=4,
+    output_path="/tmp/i2v.mp4",
+    verbose=True,
+)
+
+print(result["saved_file"])
+```
+
+### Start image + end image
+
+```python
+from wan2gp_skill import generate_video
+
+result = generate_video(
     image_start_path="/tmp/start.png",
     image_end_path="/tmp/end.png",
-    duration_seconds=4,
+    prompt="The shot smoothly transitions from the first pose to the final pose with a believable head turn, subtle shoulder movement, and stable cinematic framing.",
+    duration_seconds=5,
     output_path="/tmp/i2v_end.mp4",
     verbose=True,
 )
@@ -619,17 +512,14 @@ result = generate_video(
 print(result["saved_file"])
 ```
 
----
-
-### Audio to Video Without Image
+### Audio to video
 
 ```python
 from wan2gp_skill import generate_video
 
 result = generate_video(
-    mode="s2v",
-    prompt="A cinematic dialogue scene with perfect lip sync and expressive acting",
     audio_path="/tmp/voice.mp3",
+    prompt="A cinematic close-up of a woman speaking directly to camera with natural lip sync, soft studio light, subtle facial expressions, and calm breathing between words.",
     duration_seconds=6,
     output_path="/tmp/s2v.mp4",
     verbose=True,
@@ -638,18 +528,15 @@ result = generate_video(
 print(result["saved_file"])
 ```
 
----
-
-### Audio + Reference Image
+### Audio + image
 
 ```python
 from wan2gp_skill import generate_video
 
 result = generate_video(
-    mode="s2v_i2v",
-    prompt="The woman speaks naturally in front of the camera, perfect lip sync",
     image_path="/tmp/reference.png",
     audio_path="/tmp/voice.mp3",
+    prompt="The woman from the reference image speaks naturally in French, keeping her identity consistent. The camera holds a stable close-up while she blinks, breathes, and moves her lips in sync with the audio.",
     duration_seconds=6,
     output_path="/tmp/s2v_i2v.mp4",
     verbose=True,
@@ -658,18 +545,16 @@ result = generate_video(
 print(result["saved_file"])
 ```
 
----
-
-### Audio + Reference Image + LoRA
+### Audio + image + LoRA
 
 ```python
 from wan2gp_skill import generate_video
 
 result = generate_video(
-    mode="s2v_i2v_lora",
-    prompt="The woman speaks in French in front of the camera with perfect lip sync, studio ambiance",
     image_path="/tmp/reference.png",
     audio_path="/tmp/voice.mp3",
+    use_lora=True,
+    prompt="The woman from the reference image speaks in French in front of the camera with perfect lip sync, relaxed studio ambiance, realistic skin detail, and subtle head movement.",
     duration_seconds=6,
     output_path="/tmp/s2v_i2v_lora.mp4",
     verbose=True,
@@ -678,28 +563,141 @@ result = generate_video(
 print(result["saved_file"])
 ```
 
----
-
-## Manual Job Tracking Example
+### Custom LoRA URL
 
 ```python
-from wan2gp_skill import submit_text_to_video, get_job_status, format_job_status
+from wan2gp_skill import generate_video
 
-submit_result = submit_text_to_video(
-    prompt="A futuristic hospital corridor, cinematic lighting",
-    duration_seconds=3,
+result = generate_video(
+    image_path="/tmp/reference.png",
+    audio_path="/tmp/voice.mp3",
+    use_lora=True,
+    lora_url="https://example.com/my_lora.safetensors",
+    lora_multiplier="0.8",
+    prompt="The subject speaks naturally with clean lip sync and a stable cinematic close-up.",
+    duration_seconds=6,
+    output_path="/tmp/custom_lora.mp4",
+    verbose=True,
 )
-
-job_id = submit_result["job_id"]
-
-job = get_job_status(job_id)
-
-print(format_job_status(job))
 ```
 
----
+### Submit now, monitor manually
 
-## Possible Status Values
+```python
+from wan2gp_skill import submit_video_job, monitor_url
+
+result = submit_video_job(
+    prompt="A dreamy cinematic shot of a small robot discovering a glowing flower in a dark workshop",
+    mode="t2v",
+    duration_seconds=4,
+)
+
+print("Job:", result["job_id"])
+print("Monitor:", monitor_url())
+```
+
+### Wait for an existing job
+
+```python
+from wan2gp_skill import wait_for_job, download_first_generated_file
+
+job = wait_for_job("JOB_ID", verbose=True)
+file_path = download_first_generated_file(job, "/tmp/result.mp4")
+print(file_path)
+```
+
+## Prompt rules for LTX 2.3
+
+Write prompts as cinematic direction, not keyword lists.
+
+A strong prompt usually contains:
+
+1. shot type
+2. camera movement
+3. environment
+4. lighting
+5. subject action
+6. visible emotional cues
+7. timing
+8. audio or dialogue if relevant
+
+Good structure:
+
+```text
+A tight cinematic close-up. The camera slowly pushes in as the woman lowers her eyes, breathes in, and turns slightly toward the window light. Warm afternoon light crosses her face, revealing subtle tension in her jaw and fingers. She whispers in French, "Je crois que j'ai compris", with soft, hesitant timing. The room stays still behind her, shallow depth of field, realistic skin detail, quiet room tone.
+```
+
+Avoid:
+
+```text
+beautiful woman, cinematic, sad, dramatic, 4k, realistic, amazing, high quality
+```
+
+## Dialogue rules
+
+If the video contains dialogue, include the dialogue directly inside the prompt where it happens.
+
+Good:
+
+```text
+The camera slowly pushes in as the woman looks at her father and says in French, "Papa, je crois que la lune n'est pas un lampadaire", with a confused but sincere voice. He freezes, blinks twice, then slowly turns toward her.
+```
+
+Bad:
+
+```text
+Dialogue: Papa, je crois que la lune n'est pas un lampadaire.
+```
+
+Keep dialogue short. Long monologues can drift and reduce lip-sync quality.
+
+## Image to Video rules
+
+When using `i2v`, `s2v_i2v` or `s2v_i2v_lora`:
+
+- do not redescribe the whole reference image
+- do describe what changes after frame one
+- describe camera movement
+- describe facial movement and body movement
+- describe lighting changes if useful
+- ask for identity consistency if the character must stay faithful
+
+Example:
+
+```text
+Starting from the reference image, the camera holds a stable close-up. The subject keeps the same face, hairstyle and outfit, then slowly smiles, blinks naturally, and turns her eyes toward the lens. The background remains unchanged, with subtle film grain and soft daylight.
+```
+
+## Optimization recommendations
+
+For reliable agent automation:
+
+- use `duration_seconds=3` to `6` for first tests
+- use `num_inference_steps=8` for fast draft generation
+- increase steps only after the prompt is validated
+- use `1280x720` for 16:9 default generations
+- use `wait=False` when launching multiple jobs and monitor them from `/monitor`
+- use `verbose=True` only for debugging, not for silent background agent workflows
+- avoid uploading huge audio files when only a short dialogue is needed
+- use short, precise dialogue for lip sync
+- use `seed` only when repeatability matters
+
+## Recommended agent behavior
+
+When the user asks for a video:
+
+1. identify available inputs: prompt, image, start image, end image, audio, LoRA request
+2. choose the mode automatically when obvious
+3. write or improve the prompt as cinematic direction
+4. keep the generation short for the first pass unless the user asked otherwise
+5. call `generate_video(...)` when the user expects a finished MP4
+6. call `submit_video_job(..., wait=False)` or `generate_video(..., wait=False)` when the user wants several jobs queued
+7. give the user the `job_id` and the `monitor_url`
+8. download and return the MP4 when the job is completed
+
+## Status values
+
+Possible job statuses:
 
 ```text
 queued
@@ -708,7 +706,7 @@ completed
 failed
 ```
 
-Short codes:
+Short status values:
 
 ```text
 Q = queued
@@ -717,313 +715,53 @@ C = completed
 F = failed
 ```
 
----
+## Troubleshooting
 
-## Recommended Agent Behavior
+### Server not reachable
 
-When a user requests a video:
+Check:
 
-1. reformulate or enrich the prompt if needed
-2. choose the appropriate mode:
+- Wan2GP API server is running on the Windows PC
+- Windows firewall allows inbound connections on port 7861
+- the agent machine can reach `192.168.1.53`
+- `WAN2GP_URL` is correct
 
-* `t2v` if only a text prompt is provided
-* `i2v` if a starting image is provided
-* `i2v_end` if both start and end images are provided
-* `s2v` if only audio is provided
-* `s2v_i2v` if both audio and image are provided
-* `s2v_i2v_lora` if the user explicitly requests server LoRA rendering
+### Unauthorized
 
-3. call `generate_video(...)`
-4. announce the `job_id` if useful
-5. monitor progress with `get_job_status(job_id)`
-6. download the MP4
-7. publish the MP4 back to the conversation
+Check:
 
----
+- `WAN2GP_TOKEN` matches the API token configured server-side
+- the API uses `Authorization: Bearer TOKEN`
+- the browser monitor uses `?token=TOKEN`
 
-## Discord Upload 413
+### Job disappeared
 
-Videos larger than 8MB may fail with:
+Jobs are stored in server memory. If the API server restarts, old job ids disappear.
 
-```text
-413 Request entity too large
-```
+### No MP4 download URL
 
-Compress before upload:
-
-```bash
-ffmpeg -i input.mp4 -vf "scale=720:480" -c:v libx264 -preset fast -crf 28 -c:a aac -b:a 64k output_comp.mp4 -y
-```
-
-Reference:
-
-```text
-references/discord_upload_413.md
-```
-
----
-
-## Important Notes
-
-### Common Pitfalls
-
-#### 1. Image URL → FileNotFoundError
-
-`_ensure_file_exists()` does not automatically download HTTP URLs.
-
-For `submit_sound_to_video_with_image`, HTTP URLs are handled automatically.
-
-Other functions are not.
-
-Always provide a local file unless the function explicitly supports remote URLs.
-
----
-
-#### 2. 422 "Field required: audio/image"
-
-Multipart field names must be:
-
-```text
-image
-audio
-```
-
-Not:
-
-```text
-image_file
-audio_file
-```
-
-Correct example:
+The job may still be queued or running. Call:
 
 ```python
-requests.post(..., files={'image': ..., 'audio': ...})
+from wan2gp_skill import get_job_status
+print(get_job_status("JOB_ID"))
 ```
 
----
+### Lip-sync is poor
 
-#### 3. 401 Unauthorized
+Try:
 
-Verify:
+- shorter dialogue
+- clearer audio
+- close-up face framing
+- explicit language and delivery in the prompt
+- `s2v_i2v` or `s2v_i2v_lora` with a clean reference image
 
-```text
-Authorization: Bearer {token}
+## Minimal smoke test
+
+```python
+from wan2gp_skill import health, monitor_url
+
+print(health())
+print(monitor_url())
 ```
-
-Expected token:
-
-```text
-HGH7EPBCE51vureBCBUEBCE75678edfv9HUGBC7E
-```
-
----
-
-#### 4. Default Duration = 5 Seconds
-
-If no duration is specified, the server defaults to 5 seconds.
-
-Always confirm duration with the user.
-
-If the user asked for 15 seconds, generate 15 seconds.
-
----
-
-#### 5. Discord MEDIA failed
-
-Even below 25MB, Discord upload may fail intermittently.
-
-Solutions:
-
-* retry upload
-* retrieve manually from:
-
-```text
-G:\APPS\Wan2GP\api_outputs\
-```
-
----
-
-#### 6. HTTP Portrait URLs in submit_image_to_video
-
-These must be downloaded manually first:
-
-```bash
-curl -o /tmp/genesis.png http://192.168.1.69/sources/images_ref/genesis.png
-```
-
-Never pass HTTP URLs directly to:
-
-```text
-image_path
-```
-
-for `submit_image_to_video`.
-
----
-
-#### 7. Resolution Parameter
-
-Correct:
-
-```text
-1280x720
-```
-
-Incorrect:
-
-```text
-720p
-720
-```
-
-The server expects width x height format.
-
----
-
-## Infrastructure Requirements
-
-The Wan2GP server must be running on the Windows PC before use.
-
-Server IP:
-
-```text
-192.168.1.53
-```
-
-Port:
-
-```text
-7861
-```
-
-Windows Firewall must allow inbound connections from Linux agent machines.
-
-Jobs are memory-only.
-
-Restarting the API clears previous jobs.
-
----
-
-## Agent Instruction
-
-When a user requests video generation, use the Wan2GP Video skill.
-
-Automatically select the correct mode:
-
-```text
-Text only -> t2v
-Image + prompt -> i2v
-Start image + end image + prompt -> i2v_end
-Audio only + prompt -> s2v
-Audio + image + prompt -> s2v_i2v
-Audio + image + LoRA request -> s2v_i2v_lora
-```
-
-Always return the generated MP4 to the user when processing is complete.
-
----
-
-## Prompting Rules for LTX 2.3
-
-For LTX 2.3 video generation, write prompts as clear cinematic direction rather than keyword lists.
-
-Start with:
-
-* shot type
-* camera movement
-
-Then define:
-
-* environment
-* lighting
-* subject
-* visible action
-* mood through visible behavior
-* audio
-
-Describe physical action in sequence from beginning to end.
-
-Use present tense action verbs.
-
-Be explicit about:
-
-* materials
-* light sources
-* atmosphere
-* lens style
-* depth of field
-* pacing
-* composition
-
-Avoid vague emotional labels like:
-
-```text
-sad
-dramatic
-```
-
-Instead translate them into visible cues:
-
-* posture
-* facial tension
-* breathing
-* eye movement
-* silence
-* hand motion
-
-For image-to-video:
-
-Do not redescribe what is already visible in the reference image.
-
-Only describe:
-
-* camera motion
-* subject movement
-* environmental change
-* sound
-
-Prompts must remain coherent, cinematic, and physically plausible.
-
----
-
-## Dialogue Handling
-
-If the video contains dialogue:
-
-Include dialogue directly inside the prompt exactly where it occurs.
-
-Use quotation marks.
-
-Specify:
-
-* speaker
-* language
-* tone
-* pacing
-* emotional delivery
-
-Example:
-
-```text
-The camera slowly pushes in as the woman lowers her eyes, pauses, then whispers in English, "I should have told you the truth," with a trembling voice. After the line, the other character remains silent, exhales slowly, and looks away.
-```
-
-Guidelines:
-
-* keep dialogue short
-* keep it natural
-* support it visually
-* use pauses, gestures, facial expressions, ambient sound
-
-Avoid long monologues or overly complex lip sync.
-
-```
-```
-
-
-
-
-For LTX 2.3 video generation, write the prompt as a clear cinematic direction, not as a list of keywords. Start with the shot type and camera movement, then define the environment, lighting, subject, visible action, mood, and audio. Describe movement in a physical sequence from beginning to end, using present-tense action verbs: what the subject does, how the camera reacts, and what changes in the scene. Be specific about materials, light sources, atmosphere, lens style, depth of field, pacing, and frame composition. Avoid vague emotions like “sad” or “dramatic”; translate them into visible cues such as posture, facial tension, hand movement, breathing, eye direction, or silence. For Image-to-Video, do not redescribe what is already visible in the reference image; only describe camera motion, subject movement, environmental changes, and sound. Keep the prompt coherent, cinematic, and physically possible.
-
-If the video contains dialogue, include the dialogue directly inside the prompt exactly where it happens in the scene, using quotation marks and specifying who speaks, in what language, tone, pace, and emotional delivery. Do not place dialogue in a separate note unless the tool explicitly asks for it; integrate it into the action so the model understands timing and performance. Example: The camera slowly pushes in as the woman lowers her eyes, pauses, then whispers in English, “I should have told you the truth,” with a trembling voice. After the line, describe the reaction: the other character remains silent, exhales slowly, and looks away. Keep dialogue short, natural, and visually supported by facial expressions, pauses, gestures, and ambient sound, because long monologues or complex lip-sync can drift.
