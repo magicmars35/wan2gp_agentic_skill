@@ -21,14 +21,22 @@ from shared.api import init
 
 WAN2GP_ROOT = Path(r"G:\APPS\Wan2GP")
 
-TEMPLATE_FILES = {
-    "t2v": WAN2GP_ROOT / "ltx2_template_t2v.json",
-    "i2v": WAN2GP_ROOT / "ltx2_template_i2v.json",
-    "i2v_end": WAN2GP_ROOT / "ltx2_template_i2v_end.json",
-    "s2v": WAN2GP_ROOT / "ltx2_template_s2v.json",
-    "s2v_i2v": WAN2GP_ROOT / "ltx2_template_s2v_i2v.json",
-    "s2v_i2v_lora": WAN2GP_ROOT / "ltx2_template_s2v_i2v_lora.json",
-}
+# Un seul template universel.
+# Il doit contenir la structure complète exportée par Wan2GP :
+# [
+#   {
+#     "id": ...,
+#     "params": {
+#       ...
+#     }
+#   }
+# ]
+#
+# Important :
+# Ce fichier peut être basé sur n'importe lequel des anciens templates LTX2,
+# car les anciens fichiers avaient les mêmes clés.
+# Le serveur applique ensuite les différences de mode avec apply_mode_controls().
+TEMPLATE_FILE = WAN2GP_ROOT / "ltx2_template_universal.json"
 
 OUTPUT_DIR = WAN2GP_ROOT / "api_outputs"
 INPUT_DIR = WAN2GP_ROOT / "api_inputs"
@@ -51,6 +59,85 @@ MAX_STEPS = 100
 ALLOWED_IMAGE_EXTENSIONS = [".png", ".jpg", ".jpeg", ".webp"]
 ALLOWED_AUDIO_EXTENSIONS = [".mp3", ".wav", ".ogg", ".m4a", ".flac"]
 
+# LoRA par défaut pour le mode s2v_i2v_lora.
+# Tu peux remplacer cette URL par ta LoRA serveur si besoin.
+DEFAULT_LORA_URL = (
+    "https://huggingface.co/DeepBeepMeep/LTX-2/resolve/main/"
+    "loras/Ltx2.3-Licon-VBVR-I2V-96000-R32.safetensors"
+)
+DEFAULT_LORA_MULTIPLIER = "1"
+
+# Modes API supportés.
+# Les anciens fichiers JSON séparés sont remplacés par cette table de contrôle.
+MODE_CONTROLS = {
+    "t2v": {
+        "public_mode": "text_to_video",
+        "requires_image_start": False,
+        "requires_image_end": False,
+        "requires_audio": False,
+        "uses_lora": False,
+        "image_prompt_type": "",
+        "audio_prompt_type": "",
+        "multi_prompts_gen_type": "G",
+        "prompt_enhancer": "",
+    },
+    "i2v": {
+        "public_mode": "image_to_video",
+        "requires_image_start": True,
+        "requires_image_end": False,
+        "requires_audio": False,
+        "uses_lora": False,
+        "image_prompt_type": "S",
+        "audio_prompt_type": "",
+        "multi_prompts_gen_type": "FG",
+        "prompt_enhancer": "",
+    },
+    "i2v_end": {
+        "public_mode": "image_to_video_with_end_image",
+        "requires_image_start": True,
+        "requires_image_end": True,
+        "requires_audio": False,
+        "uses_lora": False,
+        "image_prompt_type": "SE",
+        "audio_prompt_type": "",
+        "multi_prompts_gen_type": "FG",
+        "prompt_enhancer": "T",
+    },
+    "s2v": {
+        "public_mode": "sound_to_video",
+        "requires_image_start": False,
+        "requires_image_end": False,
+        "requires_audio": True,
+        "uses_lora": False,
+        "image_prompt_type": "",
+        "audio_prompt_type": "A",
+        "multi_prompts_gen_type": "FG",
+        "prompt_enhancer": "T",
+    },
+    "s2v_i2v": {
+        "public_mode": "sound_to_video_with_reference_image",
+        "requires_image_start": True,
+        "requires_image_end": False,
+        "requires_audio": True,
+        "uses_lora": False,
+        "image_prompt_type": "S",
+        "audio_prompt_type": "A",
+        "multi_prompts_gen_type": "FG",
+        "prompt_enhancer": "T",
+    },
+    "s2v_i2v_lora": {
+        "public_mode": "sound_to_video_with_reference_image_and_lora",
+        "requires_image_start": True,
+        "requires_image_end": False,
+        "requires_audio": True,
+        "uses_lora": True,
+        "image_prompt_type": "S",
+        "audio_prompt_type": "A",
+        "multi_prompts_gen_type": "FG",
+        "prompt_enhancer": "T",
+    },
+}
+
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 INPUT_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -59,7 +146,7 @@ INPUT_DIR.mkdir(parents=True, exist_ok=True)
 # HELPERS
 # =========================================================
 
-def now_iso():
+def now_iso() -> str:
     return datetime.now().isoformat()
 
 
@@ -75,6 +162,7 @@ def get_requester_info(request: Request) -> dict:
 
     requester_ip :
     - utilise X-Forwarded-For si présent
+    - sinon utilise X-Real-IP si présent
     - sinon utilise request.client.host
 
     requester_user_agent :
@@ -119,22 +207,31 @@ def validate_common_params(duration_seconds: int, fps: int, num_inference_steps:
         )
 
 
-def load_template_settings(template_file: Path) -> dict:
+def validate_mode(mode: str):
+    if mode not in MODE_CONTROLS:
+        allowed = ", ".join(MODE_CONTROLS.keys())
+        raise ValueError(f"Mode inconnu : {mode}. Modes acceptés : {allowed}")
+
+
+def load_universal_template_settings(template_file: Path) -> dict:
     if not template_file.exists():
-        raise RuntimeError(f"Template introuvable : {template_file}")
+        raise RuntimeError(f"Template universel introuvable : {template_file}")
 
     with open(template_file, "r", encoding="utf-8") as f:
         exported = json.load(f)
 
     if not isinstance(exported, list) or not exported:
-        raise RuntimeError(f"Template invalide : {template_file}")
+        raise RuntimeError(f"Template universel invalide : {template_file}")
 
     first = exported[0]
 
-    if "params" not in first:
-        raise RuntimeError(f"Le template ne contient pas 'params' : {template_file}")
+    if not isinstance(first, dict) or "params" not in first:
+        raise RuntimeError(f"Le template universel ne contient pas 'params' : {template_file}")
 
     settings = first["params"]
+
+    if not isinstance(settings, dict):
+        raise RuntimeError(f"Le champ 'params' du template universel n'est pas un objet JSON : {template_file}")
 
     settings["model_type"] = FIXED_MODEL_TYPE
     settings["base_model_type"] = FIXED_BASE_MODEL_TYPE
@@ -142,26 +239,150 @@ def load_template_settings(template_file: Path) -> dict:
     return settings
 
 
-TEMPLATE_SETTINGS = {
-    mode: load_template_settings(path)
-    for mode, path in TEMPLATE_FILES.items()
-}
+UNIVERSAL_TEMPLATE_SETTINGS = load_universal_template_settings(TEMPLATE_FILE)
 
 
 def compute_video_length(duration_seconds: int, fps: int) -> int:
+    # Wan2GP attend souvent un nombre de frames sous la forme durée * fps + 1.
     return int(duration_seconds * fps) + 1
 
 
-def base_settings(mode: str) -> dict:
-    if mode not in TEMPLATE_SETTINGS:
-        raise ValueError(f"Mode inconnu : {mode}")
+def base_settings() -> dict:
+    """
+    Retourne une copie profonde du template universel.
 
-    settings = copy.deepcopy(TEMPLATE_SETTINGS[mode])
+    Le template n'est jamais modifié directement en mémoire.
+    Chaque job reçoit sa propre copie, puis les contrôles de mode sont appliqués.
+    """
+    settings = copy.deepcopy(UNIVERSAL_TEMPLATE_SETTINGS)
 
     settings["model_type"] = FIXED_MODEL_TYPE
     settings["base_model_type"] = FIXED_BASE_MODEL_TYPE
     settings["client_id"] = ""
     settings["output_filename"] = ""
+
+    return settings
+
+
+def reset_control_fields(settings: dict) -> dict:
+    """
+    Nettoie tous les champs qui peuvent provoquer un effet de bord entre les modes.
+
+    Cette fonction est volontairement stricte :
+    - pas d'image résiduelle sur un t2v
+    - pas d'audio résiduel sur un i2v
+    - pas de LoRA résiduelle si le mode ne l'utilise pas
+    - pas de source vidéo ou guide multimodal caché
+    """
+    # Fichiers de référence et guides
+    settings["image_start"] = None
+    settings["image_end"] = None
+    settings["audio_guide"] = None
+    settings["audio_guide2"] = None
+    settings["custom_guide"] = None
+    settings["audio_source"] = None
+    settings["video_source"] = None
+    settings["video_guide"] = None
+    settings["image_guide"] = None
+    settings["image_refs"] = None
+    settings["frames_positions"] = None
+
+    # Types de prompts et contrôles
+    settings["image_prompt_type"] = ""
+    settings["audio_prompt_type"] = ""
+    settings["video_prompt_type"] = ""
+    settings["multi_prompts_gen_type"] = "G"
+    settings["multi_images_gen_type"] = 0
+    settings["image_mode"] = 0
+    settings["mode"] = ""
+
+    # LoRA
+    settings["activated_loras"] = []
+    settings["loras_multipliers"] = ""
+
+    # Champs de compatibilité conservés neutres
+    settings["keep_frames_video_source"] = ""
+    settings["keep_frames_video_guide"] = ""
+    settings["video_guide_outpainting"] = "#"
+    settings["video_guide_outpainting_ratio"] = ""
+
+    return settings
+
+
+def apply_mode_controls(
+    settings: dict,
+    mode: str,
+    image_start: Path | None = None,
+    image_end: Path | None = None,
+    audio_guide: Path | None = None,
+    lora_url: str | None = None,
+    lora_multiplier: str | None = None,
+) -> dict:
+    """
+    Applique la couche de contrôle du mode.
+
+    C'est ici que l'ancien comportement des 6 templates séparés est reproduit :
+    - t2v : texte seul
+    - i2v : image de départ
+    - i2v_end : image de départ + image de fin
+    - s2v : audio seul
+    - s2v_i2v : audio + image
+    - s2v_i2v_lora : audio + image + LoRA
+    """
+    validate_mode(mode)
+    control = MODE_CONTROLS[mode]
+
+    settings = reset_control_fields(settings)
+
+    requires_image_start = control["requires_image_start"]
+    requires_image_end = control["requires_image_end"]
+    requires_audio = control["requires_audio"]
+    uses_lora = control["uses_lora"]
+
+    if requires_image_start and image_start is None:
+        raise ValueError(f"Le mode {mode} nécessite une image de départ")
+
+    if requires_image_end and image_end is None:
+        raise ValueError(f"Le mode {mode} nécessite une image de fin")
+
+    if requires_audio and audio_guide is None:
+        raise ValueError(f"Le mode {mode} nécessite un fichier audio")
+
+    if image_start is not None and not requires_image_start:
+        raise ValueError(f"Le mode {mode} ne doit pas recevoir d'image de départ")
+
+    if image_end is not None and not requires_image_end:
+        raise ValueError(f"Le mode {mode} ne doit pas recevoir d'image de fin")
+
+    if audio_guide is not None and not requires_audio:
+        raise ValueError(f"Le mode {mode} ne doit pas recevoir de fichier audio")
+
+    settings["image_prompt_type"] = control["image_prompt_type"]
+    settings["audio_prompt_type"] = control["audio_prompt_type"]
+    settings["multi_prompts_gen_type"] = control["multi_prompts_gen_type"]
+    settings["prompt_enhancer"] = control["prompt_enhancer"]
+
+    if requires_image_start:
+        settings["image_start"] = str(image_start)
+
+    if requires_image_end:
+        settings["image_end"] = str(image_end)
+
+    if requires_audio:
+        settings["audio_guide"] = str(audio_guide)
+
+    if uses_lora:
+        final_lora_url = (lora_url or DEFAULT_LORA_URL or "").strip()
+        final_lora_multiplier = (lora_multiplier or DEFAULT_LORA_MULTIPLIER or "1").strip()
+
+        if not final_lora_url:
+            raise ValueError(f"Le mode {mode} nécessite une LoRA")
+
+        settings["activated_loras"] = [final_lora_url]
+        settings["loras_multipliers"] = final_lora_multiplier
+    else:
+        settings["activated_loras"] = []
+        settings["loras_multipliers"] = ""
 
     return settings
 
@@ -210,8 +431,12 @@ def build_v2_settings(
     image_start: Path | None = None,
     image_end: Path | None = None,
     audio_guide: Path | None = None,
+    lora_url: str | None = None,
+    lora_multiplier: str | None = None,
 ) -> dict:
-    settings = base_settings(mode)
+    validate_common_params(duration_seconds, fps, num_inference_steps)
+
+    settings = base_settings()
 
     settings["prompt"] = prompt
     settings["negative_prompt"] = negative_prompt or ""
@@ -224,69 +449,18 @@ def build_v2_settings(
 
     settings["seed"] = seed if seed is not None else random.randint(1, 2_147_483_647)
 
-    settings["image_start"] = str(image_start) if image_start else None
-    settings["image_end"] = str(image_end) if image_end else None
-    settings["audio_guide"] = str(audio_guide) if audio_guide else None
-    settings["audio_guide2"] = None
+    settings["model_type"] = FIXED_MODEL_TYPE
+    settings["base_model_type"] = FIXED_BASE_MODEL_TYPE
 
-    settings["image_refs"] = None
-    settings["frames_positions"] = None
-    settings["video_source"] = None
-    settings["video_guide"] = None
-    settings["image_guide"] = None
-    settings["custom_guide"] = None
-    settings["audio_source"] = None
-    settings["video_prompt_type"] = ""
-    settings["mode"] = ""
-    settings["image_mode"] = 0
-
-    if mode == "t2v":
-        settings["image_prompt_type"] = ""
-        settings["audio_prompt_type"] = ""
-        settings["image_start"] = None
-        settings["image_end"] = None
-        settings["audio_guide"] = None
-        settings["activated_loras"] = []
-        settings["loras_multipliers"] = ""
-
-    elif mode == "i2v":
-        settings["image_prompt_type"] = "S"
-        settings["audio_prompt_type"] = ""
-        settings["image_end"] = None
-        settings["audio_guide"] = None
-        settings["activated_loras"] = []
-        settings["loras_multipliers"] = ""
-
-    elif mode == "i2v_end":
-        settings["image_prompt_type"] = "SE"
-        settings["audio_prompt_type"] = ""
-        settings["audio_guide"] = None
-        settings["activated_loras"] = []
-        settings["loras_multipliers"] = ""
-
-    elif mode == "s2v":
-        settings["image_prompt_type"] = ""
-        settings["audio_prompt_type"] = "A"
-        settings["image_start"] = None
-        settings["image_end"] = None
-        settings["activated_loras"] = []
-        settings["loras_multipliers"] = ""
-
-    elif mode == "s2v_i2v":
-        settings["image_prompt_type"] = "S"
-        settings["audio_prompt_type"] = "A"
-        settings["image_end"] = None
-        settings["activated_loras"] = []
-        settings["loras_multipliers"] = ""
-
-    elif mode == "s2v_i2v_lora":
-        settings["image_prompt_type"] = "S"
-        settings["audio_prompt_type"] = "A"
-        settings["image_end"] = None
-        # On conserve activated_loras et loras_multipliers depuis le template.
-
-    else:
-        raise ValueError(f"Mode inconnu : {mode}")
+    settings = apply_mode_controls(
+        settings=settings,
+        mode=mode,
+        image_start=image_start,
+        image_end=image_end,
+        audio_guide=audio_guide,
+        lora_url=lora_url,
+        lora_multiplier=lora_multiplier,
+    )
 
     return settings
 
@@ -297,8 +471,8 @@ def build_v2_settings(
 
 app = FastAPI(
     title="Wan2GP LAN API",
-    version="2.1",
-    description="API LAN pour générer des vidéos via Wan2GP",
+    version="2.2",
+    description="API LAN pour générer des vidéos via Wan2GP avec un template universel",
 )
 
 jobs = {}
@@ -572,10 +746,11 @@ def health():
     return {
         "status": "ok",
         "service": "wan2gp-api",
-        "version": "2.1",
+        "version": "2.2",
         "model_type": FIXED_MODEL_TYPE,
         "base_model_type": FIXED_BASE_MODEL_TYPE,
-        "modes": list(TEMPLATE_FILES.keys()),
+        "template_file": str(TEMPLATE_FILE),
+        "modes": list(MODE_CONTROLS.keys()),
     }
 
 
@@ -588,14 +763,25 @@ def model_info(authorization: str | None = Header(default=None)):
         "display_name": DISPLAY_MODEL_NAME,
         "model_type": FIXED_MODEL_TYPE,
         "base_model_type": FIXED_BASE_MODEL_TYPE,
-        "templates": {
-            mode: str(path)
-            for mode, path in TEMPLATE_FILES.items()
-        },
+        "template_file": str(TEMPLATE_FILE),
         "default_resolution": DEFAULT_RESOLUTION,
         "default_fps": DEFAULT_FPS,
         "default_duration_seconds": DEFAULT_DURATION_SECONDS,
         "default_steps": DEFAULT_STEPS,
+        "modes": {
+            mode: {
+                "public_mode": control["public_mode"],
+                "requires_image_start": control["requires_image_start"],
+                "requires_image_end": control["requires_image_end"],
+                "requires_audio": control["requires_audio"],
+                "uses_lora": control["uses_lora"],
+                "image_prompt_type": control["image_prompt_type"],
+                "audio_prompt_type": control["audio_prompt_type"],
+                "multi_prompts_gen_type": control["multi_prompts_gen_type"],
+                "prompt_enhancer": control["prompt_enhancer"],
+            }
+            for mode, control in MODE_CONTROLS.items()
+        },
     }
 
 
@@ -628,7 +814,7 @@ def get_job(job_id: str, authorization: str | None = Header(default=None)):
 
 
 # =========================================================
-# ROUTES GENERATION V2.1
+# ROUTES GENERATION V2.2
 # =========================================================
 
 @app.post("/generate/t2v")
@@ -653,9 +839,11 @@ def generate_t2v(
         num_inference_steps=req.num_inference_steps,
     )
 
+    public_mode = MODE_CONTROLS["t2v"]["public_mode"]
+
     create_job_record(
         job_id=job_id,
-        mode="text_to_video",
+        mode=public_mode,
         prompt=req.prompt,
         settings=settings,
         duration_seconds=req.duration_seconds,
@@ -664,6 +852,7 @@ def generate_t2v(
         requester_info=requester_info,
         extra={
             "api_mode": "t2v",
+            "template_file": str(TEMPLATE_FILE),
         },
     )
 
@@ -672,7 +861,7 @@ def generate_t2v(
     return {
         "job_id": job_id,
         "status": "queued",
-        "mode": "text_to_video",
+        "mode": public_mode,
         "api_mode": "t2v",
         "requester_ip": requester_info.get("requester_ip", ""),
         "status_url": f"/jobs/{job_id}",
@@ -719,9 +908,11 @@ async def generate_i2v(
         image_start=image_path,
     )
 
+    public_mode = MODE_CONTROLS["i2v"]["public_mode"]
+
     create_job_record(
         job_id=job_id,
-        mode="image_to_video",
+        mode=public_mode,
         prompt=prompt,
         settings=settings,
         duration_seconds=duration_seconds,
@@ -730,6 +921,7 @@ async def generate_i2v(
         requester_info=requester_info,
         extra={
             "api_mode": "i2v",
+            "template_file": str(TEMPLATE_FILE),
             "input_image": str(image_path),
         },
     )
@@ -739,7 +931,7 @@ async def generate_i2v(
     return {
         "job_id": job_id,
         "status": "queued",
-        "mode": "image_to_video",
+        "mode": public_mode,
         "api_mode": "i2v",
         "requester_ip": requester_info.get("requester_ip", ""),
         "status_url": f"/jobs/{job_id}",
@@ -796,9 +988,11 @@ async def generate_i2v_end(
         image_end=image_end_path,
     )
 
+    public_mode = MODE_CONTROLS["i2v_end"]["public_mode"]
+
     create_job_record(
         job_id=job_id,
-        mode="image_to_video_with_end_image",
+        mode=public_mode,
         prompt=prompt,
         settings=settings,
         duration_seconds=duration_seconds,
@@ -807,6 +1001,7 @@ async def generate_i2v_end(
         requester_info=requester_info,
         extra={
             "api_mode": "i2v_end",
+            "template_file": str(TEMPLATE_FILE),
             "input_image_start": str(image_start_path),
             "input_image_end": str(image_end_path),
         },
@@ -817,7 +1012,7 @@ async def generate_i2v_end(
     return {
         "job_id": job_id,
         "status": "queued",
-        "mode": "image_to_video_with_end_image",
+        "mode": public_mode,
         "api_mode": "i2v_end",
         "requester_ip": requester_info.get("requester_ip", ""),
         "status_url": f"/jobs/{job_id}",
@@ -864,9 +1059,11 @@ async def generate_s2v(
         audio_guide=audio_path,
     )
 
+    public_mode = MODE_CONTROLS["s2v"]["public_mode"]
+
     create_job_record(
         job_id=job_id,
-        mode="sound_to_video",
+        mode=public_mode,
         prompt=prompt,
         settings=settings,
         duration_seconds=duration_seconds,
@@ -875,6 +1072,7 @@ async def generate_s2v(
         requester_info=requester_info,
         extra={
             "api_mode": "s2v",
+            "template_file": str(TEMPLATE_FILE),
             "input_audio": str(audio_path),
         },
     )
@@ -884,7 +1082,7 @@ async def generate_s2v(
     return {
         "job_id": job_id,
         "status": "queued",
-        "mode": "sound_to_video",
+        "mode": public_mode,
         "api_mode": "s2v",
         "requester_ip": requester_info.get("requester_ip", ""),
         "status_url": f"/jobs/{job_id}",
@@ -941,9 +1139,11 @@ async def generate_s2v_i2v(
         audio_guide=audio_path,
     )
 
+    public_mode = MODE_CONTROLS["s2v_i2v"]["public_mode"]
+
     create_job_record(
         job_id=job_id,
-        mode="sound_to_video_with_reference_image",
+        mode=public_mode,
         prompt=prompt,
         settings=settings,
         duration_seconds=duration_seconds,
@@ -952,6 +1152,7 @@ async def generate_s2v_i2v(
         requester_info=requester_info,
         extra={
             "api_mode": "s2v_i2v",
+            "template_file": str(TEMPLATE_FILE),
             "input_image": str(image_path),
             "input_audio": str(audio_path),
         },
@@ -962,7 +1163,7 @@ async def generate_s2v_i2v(
     return {
         "job_id": job_id,
         "status": "queued",
-        "mode": "sound_to_video_with_reference_image",
+        "mode": public_mode,
         "api_mode": "s2v_i2v",
         "requester_ip": requester_info.get("requester_ip", ""),
         "status_url": f"/jobs/{job_id}",
@@ -981,6 +1182,8 @@ async def generate_s2v_i2v_lora(
     seed: int | None = Form(None),
     negative_prompt: str | None = Form(None),
     num_inference_steps: int = Form(DEFAULT_STEPS),
+    lora_url: str | None = Form(None),
+    lora_multiplier: str | None = Form(None),
     authorization: str | None = Header(default=None),
 ):
     check_auth(authorization)
@@ -1017,11 +1220,15 @@ async def generate_s2v_i2v_lora(
         num_inference_steps=num_inference_steps,
         image_start=image_path,
         audio_guide=audio_path,
+        lora_url=lora_url,
+        lora_multiplier=lora_multiplier,
     )
+
+    public_mode = MODE_CONTROLS["s2v_i2v_lora"]["public_mode"]
 
     create_job_record(
         job_id=job_id,
-        mode="sound_to_video_with_reference_image_and_lora",
+        mode=public_mode,
         prompt=prompt,
         settings=settings,
         duration_seconds=duration_seconds,
@@ -1030,6 +1237,7 @@ async def generate_s2v_i2v_lora(
         requester_info=requester_info,
         extra={
             "api_mode": "s2v_i2v_lora",
+            "template_file": str(TEMPLATE_FILE),
             "input_image": str(image_path),
             "input_audio": str(audio_path),
             "activated_loras": settings.get("activated_loras", []),
@@ -1042,10 +1250,12 @@ async def generate_s2v_i2v_lora(
     return {
         "job_id": job_id,
         "status": "queued",
-        "mode": "sound_to_video_with_reference_image_and_lora",
+        "mode": public_mode,
         "api_mode": "s2v_i2v_lora",
         "requester_ip": requester_info.get("requester_ip", ""),
         "status_url": f"/jobs/{job_id}",
+        "activated_loras": settings.get("activated_loras", []),
+        "loras_multipliers": settings.get("loras_multipliers", ""),
     }
 
 
