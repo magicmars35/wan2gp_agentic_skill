@@ -6,9 +6,11 @@ import time
 import json
 import copy
 import random
+import html
+from urllib.parse import quote
 
 from fastapi import FastAPI, HTTPException, Header, UploadFile, File, Form, Request
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 from pydantic import BaseModel, Field
 import uvicorn
 
@@ -66,6 +68,16 @@ DEFAULT_LORA_URL = (
     "loras/Ltx2.3-Licon-VBVR-I2V-96000-R32.safetensors"
 )
 DEFAULT_LORA_MULTIPLIER = "1"
+
+# Interface web intégrée.
+# La page de monitoring est servie directement par FastAPI.
+# Accès :
+#   http://IP_DU_SERVEUR:7861/monitor?token=TON_TOKEN
+#
+# Tu peux mettre un token différent si tu veux séparer l'accès API et l'accès humain.
+MONITOR_TOKEN = API_TOKEN
+MONITOR_TITLE = "Wan2GP Queue Monitor V2"
+MONITOR_AUTO_REFRESH_SECONDS = 5
 
 # Modes API supportés.
 # Les anciens fichiers JSON séparés sont remplacés par cette table de contrôle.
@@ -737,9 +749,925 @@ def run_generation(job_id: str, settings: dict):
         )
 
 
+
+# =========================================================
+# MONITOR WEB HTML
+# =========================================================
+
+def check_monitor_access(
+    authorization: str | None = None,
+    token: str | None = None,
+):
+    """
+    Autorise l'accès au monitor de deux façons :
+    - header Authorization: Bearer ...
+    - paramètre d'URL ?token=...
+
+    Pour un navigateur, le paramètre token est le plus pratique.
+    """
+    expected_header = f"Bearer {MONITOR_TOKEN}"
+
+    if authorization == expected_header:
+        return
+
+    if token == MONITOR_TOKEN:
+        return
+
+    raise HTTPException(status_code=401, detail="Unauthorized monitor access")
+
+
+def h(value) -> str:
+    return html.escape(str(value), quote=True)
+
+
+def status_badge_class(status: str) -> str:
+    return {
+        "queued": "badge queued",
+        "running": "badge running",
+        "completed": "badge completed",
+        "failed": "badge failed",
+    }.get(status, "badge unknown")
+
+
+def mode_badge_class(api_mode: str) -> str:
+    return {
+        "t2v": "mode-badge t2v",
+        "i2v": "mode-badge i2v",
+        "i2v_end": "mode-badge i2v-end",
+        "s2v": "mode-badge s2v",
+        "s2v_i2v": "mode-badge s2v-i2v",
+        "s2v_i2v_lora": "mode-badge s2v-i2v-lora",
+    }.get(api_mode, "mode-badge unknown")
+
+
+def format_mode_label(job: dict) -> str:
+    api_mode = job.get("api_mode", "")
+
+    return {
+        "t2v": "Texte → Vidéo",
+        "i2v": "Image → Vidéo",
+        "i2v_end": "Image début + fin",
+        "s2v": "Audio → Vidéo",
+        "s2v_i2v": "Audio + Image",
+        "s2v_i2v_lora": "Audio + Image + LoRA",
+    }.get(api_mode, job.get("mode", "Mode inconnu"))
+
+
+def parse_iso_datetime(value: str | None):
+    if not value:
+        return None
+
+    try:
+        return datetime.fromisoformat(str(value))
+    except Exception:
+        return None
+
+
+def format_date_value(value: str | None) -> str:
+    dt = parse_iso_datetime(value)
+
+    if not dt:
+        return str(value or "")
+
+    return dt.strftime("%d/%m/%Y %H:%M:%S")
+
+
+def format_duration_seconds(seconds: int | float | None) -> str:
+    if seconds is None:
+        return ""
+
+    seconds = int(seconds)
+
+    if seconds < 0:
+        return ""
+
+    hours = seconds // 3600
+    minutes = (seconds % 3600) // 60
+    secs = seconds % 60
+
+    if hours > 0:
+        return f"{hours}h {minutes:02d}m {secs:02d}s"
+
+    if minutes > 0:
+        return f"{minutes}m {secs:02d}s"
+
+    return f"{secs}s"
+
+
+def generation_duration(job: dict) -> str:
+    started = job.get("started_at")
+    finished = job.get("finished_at")
+
+    started_dt = parse_iso_datetime(started)
+
+    if not started_dt:
+        return ""
+
+    if job.get("status") == "running":
+        diff = datetime.now() - started_dt
+        return f"{format_duration_seconds(diff.total_seconds())} en cours"
+
+    finished_dt = parse_iso_datetime(finished)
+
+    if not finished_dt:
+        return ""
+
+    diff = finished_dt - started_dt
+    return format_duration_seconds(diff.total_seconds())
+
+
+def first_download_url(job: dict) -> str | None:
+    download_urls = job.get("download_urls")
+
+    if not isinstance(download_urls, list) or not download_urls:
+        return None
+
+    return download_urls[0]
+
+
+def is_active_job(job: dict) -> bool:
+    return job.get("status") in ("queued", "running")
+
+
+def is_completed_job(job: dict) -> bool:
+    return job.get("status") == "completed"
+
+
+def is_failed_job(job: dict) -> bool:
+    return job.get("status") == "failed"
+
+
+def get_requester_ip_from_job(job: dict) -> str:
+    return (
+        job.get("requester_ip")
+        or job.get("client_ip")
+        or job.get("remote_addr")
+        or ""
+    )
+
+
+def basename_or_empty(value) -> str:
+    if not value:
+        return ""
+
+    return Path(str(value)).name
+
+
+def prompt_excerpt(text: str | None, limit: int = 500) -> str:
+    text = str(text or "")
+
+    if len(text) > limit:
+        return text[:limit] + "..."
+
+    return text
+
+
+def count_by_mode(jobs_list: list[dict], mode: str) -> int:
+    return sum(1 for job in jobs_list if job.get("api_mode") == mode)
+
+
+def build_monitor_download_href(job: dict, download_url: str | None, token: str | None) -> str | None:
+    if not download_url:
+        return None
+
+    job_id = job.get("job_id", "")
+    filename = Path(str(download_url)).name
+
+    if not job_id or not filename:
+        return None
+
+    token_to_use = token or MONITOR_TOKEN
+
+    return (
+        f"/monitor/download/{quote(str(job_id))}/{quote(filename)}"
+        f"?token={quote(str(token_to_use))}"
+    )
+
+
+def render_error_block(title: str, message: str) -> str:
+    return f"""
+    <div class="error">
+        <strong>{h(title)}</strong><br>
+        {h(message)}
+    </div>
+    """
+
+
+def render_input_list(job: dict) -> str:
+    rows = []
+
+    if job.get("input_image"):
+        rows.append(f'Image : <span class="mono">{h(basename_or_empty(job.get("input_image")))}</span>')
+
+    if job.get("input_image_start"):
+        rows.append(f'Début : <span class="mono">{h(basename_or_empty(job.get("input_image_start")))}</span>')
+
+    if job.get("input_image_end"):
+        rows.append(f'Fin : <span class="mono">{h(basename_or_empty(job.get("input_image_end")))}</span>')
+
+    if job.get("input_audio"):
+        rows.append(f'Audio : <span class="mono">{h(basename_or_empty(job.get("input_audio")))}</span>')
+
+    activated_loras = job.get("activated_loras")
+    if isinstance(activated_loras, list) and activated_loras:
+        lora_rows = "".join(
+            f'<div class="mono">{h(basename_or_empty(lora))}</div>'
+            for lora in activated_loras
+        )
+        rows.append(f"LoRA : {lora_rows}")
+        rows.append(f'Multiplier : <span class="mono">{h(job.get("loras_multipliers", ""))}</span>')
+
+    if not rows:
+        return '<span class="small">Aucune entrée fichier</span>'
+
+    return "".join(f"<div>{row}</div>" for row in rows)
+
+
+def render_errors(job: dict) -> str:
+    errors = job.get("errors")
+
+    if not errors:
+        return ""
+
+    try:
+        errors_json = json.dumps(errors, ensure_ascii=False, indent=2)
+    except Exception:
+        errors_json = str(errors)
+
+    return f"""
+    <div class="small ko" style="margin-top: 8px;">
+        Erreurs :
+        <pre>{h(errors_json)}</pre>
+    </div>
+    """
+
+
+def render_jobs_table(jobs_list: list[dict], token: str | None) -> str:
+    if not jobs_list:
+        return '<div class="card">Aucun job connu pour le moment.</div>'
+
+    rows = []
+
+    for job in jobs_list:
+        status = job.get("status", "unknown")
+        api_mode = job.get("api_mode", "")
+        progress = float(job.get("progress", 0) or 0)
+        progress = max(0, min(100, progress))
+
+        download_url = first_download_url(job)
+        download_href = build_monitor_download_href(job, download_url, token)
+
+        real_duration = generation_duration(job)
+        requester_ip = get_requester_ip_from_job(job)
+
+        queue_position_html = (
+            f'<strong>#{h(job.get("queue_position"))}</strong>'
+            if job.get("queue_position") is not None
+            else '<span class="small">hors file</span>'
+        )
+
+        lora_flag_html = ""
+        if job.get("activated_loras"):
+            lora_flag_html = '<div class="small warn" style="margin-top: 6px;">LoRA actif</div>'
+
+        requester_html = (
+            f'<span class="mono">{h(requester_ip)}</span>'
+            if requester_ip
+            else """
+            <span class="small warn">Non renseignée</span>
+            <div class="small">Ajoute requester_ip côté API pour afficher l’IP cliente.</div>
+            """
+        )
+
+        download_html = '<span class="small">Pas encore prêt</span>'
+        if download_href:
+            download_html = f"""
+            <a class="button-link" href="{h(download_href)}" target="_blank">
+                Télécharger MP4
+            </a>
+            """
+
+        files_html = ""
+        files = job.get("files")
+        if isinstance(files, list) and files:
+            files_html = """
+            <div class="small" style="margin-top: 8px;">
+            """ + "".join(f'<div class="mono">{h(file)}</div>' for file in files) + """
+            </div>
+            """
+
+        rows.append(f"""
+        <tr>
+            <td>
+                <span class="{h(status_badge_class(status))}">
+                    {h(status)}
+                </span>
+                <div class="small">{h(job.get("short_status", ""))}</div>
+            </td>
+
+            <td>{queue_position_html}</td>
+
+            <td>
+                <span class="{h(mode_badge_class(api_mode))}">
+                    {h(api_mode or "legacy")}
+                </span>
+                <div class="small" style="margin-top: 6px;">
+                    {h(format_mode_label(job))}
+                </div>
+                <div class="small">{h(job.get("mode", ""))}</div>
+                {lora_flag_html}
+            </td>
+
+            <td>
+                <div class="progress-wrap">
+                    <div class="progress-bar" style="width: {h(progress)}%;"></div>
+                </div>
+                <div class="progress-text">{h(progress)}%</div>
+                <div class="small">
+                    Phase : {h(job.get("phase", ""))}<br>
+                    Étape : {h(job.get("current_step", ""))}/{h(job.get("total_steps", ""))}<br>
+                    Message : {h(job.get("message", ""))}
+                </div>
+            </td>
+
+            <td>
+                <div class="small">
+                    Résolution : <strong>{h(job.get("resolution", ""))}</strong><br>
+                    Vidéo demandée : <strong>{h(job.get("duration_seconds", ""))}s</strong><br>
+                    FPS : <strong>{h(job.get("fps", ""))}</strong><br>
+                    Seed : <span class="mono">{h(job.get("seed", ""))}</span><br>
+                    Job ID : <span class="mono">{h(job.get("job_id", ""))}</span>
+                </div>
+            </td>
+
+            <td>{requester_html}</td>
+
+            <td>
+                <div class="prompt">
+                    {h(prompt_excerpt(job.get("prompt", ""), 500)).replace(chr(10), "<br>")}
+                </div>
+            </td>
+
+            <td>
+                <div class="input-list small">
+                    {render_input_list(job)}
+                </div>
+                {render_errors(job)}
+            </td>
+
+            <td>
+                <div class="small">
+                    Créé : {h(format_date_value(job.get("created_at")))}<br>
+                    Début : {h(format_date_value(job.get("started_at")))}<br>
+                    Fin : {h(format_date_value(job.get("finished_at")))}<br>
+                    MAJ : {h(format_date_value(job.get("updated_at")))}<br>
+                    <br>
+                    Durée réelle :
+                    {"<strong>" + h(real_duration) + "</strong>" if real_duration else '<span class="small">non disponible</span>'}
+                </div>
+            </td>
+
+            <td>
+                {download_html}
+                {files_html}
+            </td>
+        </tr>
+        """)
+
+    return f"""
+    <table>
+        <thead>
+            <tr>
+                <th>Statut</th>
+                <th>Queue</th>
+                <th>Type</th>
+                <th>Progression</th>
+                <th>Demande</th>
+                <th>Machine</th>
+                <th>Prompt</th>
+                <th>Entrées</th>
+                <th>Temps</th>
+                <th>Résultat</th>
+            </tr>
+        </thead>
+        <tbody>
+            {''.join(rows)}
+        </tbody>
+    </table>
+    """
+
+
+def render_monitor_page(token: str | None, auto_refresh_seconds: int) -> str:
+    with jobs_lock:
+        jobs_list = [copy.deepcopy(j) for j in jobs.values()]
+
+    jobs_list.sort(key=lambda x: x.get("sequence", 0), reverse=True)
+    jobs_list = [add_runtime_fields(j) for j in jobs_list]
+
+    active_jobs = [job for job in jobs_list if is_active_job(job)]
+    completed_jobs = [job for job in jobs_list if is_completed_job(job)]
+    failed_jobs = [job for job in jobs_list if is_failed_job(job)]
+
+    mode_counts = {
+        "t2v": count_by_mode(jobs_list, "t2v"),
+        "i2v": count_by_mode(jobs_list, "i2v"),
+        "i2v_end": count_by_mode(jobs_list, "i2v_end"),
+        "s2v": count_by_mode(jobs_list, "s2v"),
+        "s2v_i2v": count_by_mode(jobs_list, "s2v_i2v"),
+        "s2v_i2v_lora": count_by_mode(jobs_list, "s2v_i2v_lora"),
+    }
+
+    generated_at = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
+
+    model_templates_or_template = str(TEMPLATE_FILE)
+
+    return f"""<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <title>{h(MONITOR_TITLE)}</title>
+    <meta http-equiv="refresh" content="{h(auto_refresh_seconds)}">
+    <style>
+        :root {{
+            --bg: #0f1117;
+            --panel: #171a23;
+            --panel2: #202431;
+            --panel3: #11141c;
+            --text: #f3f4f6;
+            --muted: #9ca3af;
+            --border: #2d3342;
+
+            --queued: #f59e0b;
+            --running: #38bdf8;
+            --completed: #22c55e;
+            --failed: #ef4444;
+            --unknown: #94a3b8;
+
+            --t2v: #a78bfa;
+            --i2v: #60a5fa;
+            --i2v-end: #34d399;
+            --s2v: #f472b6;
+            --s2v-i2v: #fbbf24;
+            --s2v-i2v-lora: #fb7185;
+        }}
+
+        * {{
+            box-sizing: border-box;
+        }}
+
+        body {{
+            margin: 0;
+            padding: 24px;
+            background: radial-gradient(circle at top, #1d2230, var(--bg));
+            color: var(--text);
+            font-family: Arial, Helvetica, sans-serif;
+        }}
+
+        h1 {{
+            margin: 0 0 8px;
+            font-size: 28px;
+        }}
+
+        .subtitle {{
+            color: var(--muted);
+            margin-bottom: 24px;
+            line-height: 1.5;
+        }}
+
+        .top-grid {{
+            display: grid;
+            grid-template-columns: repeat(5, minmax(150px, 1fr));
+            gap: 16px;
+            margin-bottom: 24px;
+        }}
+
+        .mode-grid {{
+            display: grid;
+            grid-template-columns: repeat(6, minmax(130px, 1fr));
+            gap: 12px;
+            margin-bottom: 24px;
+        }}
+
+        .card {{
+            background: rgba(23, 26, 35, 0.92);
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            padding: 16px;
+            box-shadow: 0 12px 28px rgba(0,0,0,0.25);
+        }}
+
+        .card-title {{
+            color: var(--muted);
+            font-size: 13px;
+            margin-bottom: 8px;
+        }}
+
+        .card-value {{
+            font-size: 26px;
+            font-weight: bold;
+        }}
+
+        .section {{
+            margin-top: 28px;
+        }}
+
+        .section h2 {{
+            font-size: 20px;
+            margin-bottom: 12px;
+        }}
+
+        table {{
+            width: 100%;
+            border-collapse: collapse;
+            background: rgba(23, 26, 35, 0.92);
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            overflow: hidden;
+        }}
+
+        th, td {{
+            padding: 12px 10px;
+            border-bottom: 1px solid var(--border);
+            vertical-align: top;
+            text-align: left;
+            font-size: 14px;
+        }}
+
+        th {{
+            background: var(--panel2);
+            color: #d1d5db;
+            font-size: 12px;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+            position: sticky;
+            top: 0;
+            z-index: 2;
+        }}
+
+        tr:last-child td {{
+            border-bottom: none;
+        }}
+
+        tr:hover td {{
+            background: rgba(255,255,255,0.025);
+        }}
+
+        .badge,
+        .mode-badge {{
+            display: inline-block;
+            padding: 5px 9px;
+            border-radius: 999px;
+            font-size: 12px;
+            font-weight: bold;
+            color: #050505;
+            white-space: nowrap;
+        }}
+
+        .badge.queued {{
+            background: var(--queued);
+        }}
+
+        .badge.running {{
+            background: var(--running);
+        }}
+
+        .badge.completed {{
+            background: var(--completed);
+        }}
+
+        .badge.failed {{
+            background: var(--failed);
+            color: white;
+        }}
+
+        .badge.unknown {{
+            background: var(--unknown);
+        }}
+
+        .mode-badge.t2v {{
+            background: var(--t2v);
+        }}
+
+        .mode-badge.i2v {{
+            background: var(--i2v);
+        }}
+
+        .mode-badge.i2v-end {{
+            background: var(--i2v-end);
+        }}
+
+        .mode-badge.s2v {{
+            background: var(--s2v);
+        }}
+
+        .mode-badge.s2v-i2v {{
+            background: var(--s2v-i2v);
+        }}
+
+        .mode-badge.s2v-i2v-lora {{
+            background: var(--s2v-i2v-lora);
+            color: #111827;
+        }}
+
+        .mode-badge.unknown {{
+            background: var(--unknown);
+        }}
+
+        .progress-wrap {{
+            width: 160px;
+            height: 12px;
+            background: #0b0d12;
+            border-radius: 999px;
+            overflow: hidden;
+            border: 1px solid var(--border);
+        }}
+
+        .progress-bar {{
+            height: 100%;
+            background: linear-gradient(90deg, #38bdf8, #22c55e);
+            width: 0%;
+        }}
+
+        .progress-text {{
+            color: var(--muted);
+            font-size: 12px;
+            margin-top: 4px;
+        }}
+
+        .prompt {{
+            max-width: 460px;
+            color: #e5e7eb;
+            line-height: 1.35;
+            white-space: normal;
+        }}
+
+        .small {{
+            color: var(--muted);
+            font-size: 12px;
+            line-height: 1.45;
+        }}
+
+        .mono {{
+            font-family: Consolas, Monaco, monospace;
+            font-size: 12px;
+            color: #cbd5e1;
+            word-break: break-all;
+        }}
+
+        .input-list {{
+            margin-top: 6px;
+            padding: 8px;
+            background: var(--panel3);
+            border-radius: 10px;
+            border: 1px solid var(--border);
+        }}
+
+        .input-list div {{
+            margin-bottom: 4px;
+        }}
+
+        .input-list div:last-child {{
+            margin-bottom: 0;
+        }}
+
+        a {{
+            color: #93c5fd;
+            text-decoration: none;
+        }}
+
+        a:hover {{
+            text-decoration: underline;
+        }}
+
+        .button-link {{
+            display: inline-block;
+            padding: 8px 11px;
+            background: #2563eb;
+            color: white;
+            border-radius: 10px;
+            text-decoration: none;
+            font-weight: bold;
+            font-size: 13px;
+        }}
+
+        .button-link:hover {{
+            background: #1d4ed8;
+            text-decoration: none;
+        }}
+
+        .error {{
+            background: rgba(239, 68, 68, 0.12);
+            border: 1px solid rgba(239, 68, 68, 0.45);
+            color: #fecaca;
+            padding: 16px;
+            border-radius: 14px;
+            margin-bottom: 20px;
+        }}
+
+        .ok {{
+            color: #86efac;
+        }}
+
+        .ko {{
+            color: #fca5a5;
+        }}
+
+        .warn {{
+            color: #fde68a;
+        }}
+
+        .footer {{
+            margin-top: 24px;
+            color: var(--muted);
+            font-size: 12px;
+        }}
+
+        pre {{
+            white-space: pre-wrap;
+            word-break: break-word;
+            background: #0b0d12;
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 8px;
+            color: #fecaca;
+        }}
+
+        @media (max-width: 1300px) {{
+            .top-grid {{
+                grid-template-columns: repeat(2, minmax(160px, 1fr));
+            }}
+
+            .mode-grid {{
+                grid-template-columns: repeat(2, minmax(140px, 1fr));
+            }}
+
+            table {{
+                display: block;
+                overflow-x: auto;
+            }}
+        }}
+    </style>
+</head>
+<body>
+
+<h1>{h(MONITOR_TITLE)}</h1>
+
+<div class="subtitle">
+    Serveur : <span class="mono">FastAPI intégré sur port 7861</span><br>
+    Rafraîchissement automatique : {h(auto_refresh_seconds)} s |
+    Page générée à {h(generated_at)}
+</div>
+
+<div class="top-grid">
+    <div class="card">
+        <div class="card-title">API</div>
+        <div class="card-value ok">OK</div>
+    </div>
+
+    <div class="card">
+        <div class="card-title">Total jobs</div>
+        <div class="card-value">{h(len(jobs_list))}</div>
+    </div>
+
+    <div class="card">
+        <div class="card-title">Jobs actifs</div>
+        <div class="card-value">{h(len(active_jobs))}</div>
+    </div>
+
+    <div class="card">
+        <div class="card-title">Terminés</div>
+        <div class="card-value">{h(len(completed_jobs))}</div>
+    </div>
+
+    <div class="card">
+        <div class="card-title">Échecs</div>
+        <div class="card-value">{h(len(failed_jobs))}</div>
+    </div>
+</div>
+
+<div class="mode-grid">
+    <div class="card">
+        <div class="card-title">t2v</div>
+        <div class="card-value">{h(mode_counts["t2v"])}</div>
+    </div>
+    <div class="card">
+        <div class="card-title">i2v</div>
+        <div class="card-value">{h(mode_counts["i2v"])}</div>
+    </div>
+    <div class="card">
+        <div class="card-title">i2v_end</div>
+        <div class="card-value">{h(mode_counts["i2v_end"])}</div>
+    </div>
+    <div class="card">
+        <div class="card-title">s2v</div>
+        <div class="card-value">{h(mode_counts["s2v"])}</div>
+    </div>
+    <div class="card">
+        <div class="card-title">s2v_i2v</div>
+        <div class="card-value">{h(mode_counts["s2v_i2v"])}</div>
+    </div>
+    <div class="card">
+        <div class="card-title">s2v_i2v_lora</div>
+        <div class="card-value">{h(mode_counts["s2v_i2v_lora"])}</div>
+    </div>
+</div>
+
+<div class="card">
+    <div class="card-title">Modèle</div>
+    <div>
+        <strong>{h(DISPLAY_MODEL_NAME)}</strong><br>
+        <span class="mono">{h(FIXED_MODEL_TYPE)}</span>
+    </div>
+    <div class="small" style="margin-top: 8px;">
+        Template universel :
+        <span class="mono">{h(model_templates_or_template)}</span>
+    </div>
+</div>
+
+<div class="section">
+    <h2>File d’attente et historique</h2>
+    {render_jobs_table(jobs_list, token)}
+</div>
+
+<div class="footer">
+    Wan2GP Queue Monitor intégré |
+    Page générée à {h(generated_at)} |
+    Jobs en mémoire uniquement côté API.
+</div>
+
+</body>
+</html>"""
+
+
 # =========================================================
 # ROUTES GENERALES
 # =========================================================
+
+
+@app.get("/", include_in_schema=False)
+def root_redirect():
+    return RedirectResponse(url="/monitor")
+
+
+@app.get("/monitor", response_class=HTMLResponse)
+def monitor_page(
+    token: str | None = None,
+    refresh: int = MONITOR_AUTO_REFRESH_SECONDS,
+    authorization: str | None = Header(default=None),
+):
+    check_monitor_access(authorization=authorization, token=token)
+
+    refresh = max(1, min(3600, int(refresh)))
+
+    html_body = render_monitor_page(
+        token=token,
+        auto_refresh_seconds=refresh,
+    )
+
+    return HTMLResponse(content=html_body)
+
+
+@app.get("/ui", response_class=HTMLResponse)
+def monitor_page_alias(
+    token: str | None = None,
+    refresh: int = MONITOR_AUTO_REFRESH_SECONDS,
+    authorization: str | None = Header(default=None),
+):
+    return monitor_page(
+        token=token,
+        refresh=refresh,
+        authorization=authorization,
+    )
+
+
+@app.get("/monitor/download/{job_id}/{filename}")
+def monitor_download(
+    job_id: str,
+    filename: str,
+    token: str | None = None,
+    authorization: str | None = Header(default=None),
+):
+    check_monitor_access(authorization=authorization, token=token)
+
+    job = get_job_raw(job_id)
+
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    safe_filename = Path(filename).name
+
+    for file_path in job.get("files", []):
+        path = Path(file_path)
+
+        if path.name == safe_filename and path.exists():
+            return FileResponse(
+                path,
+                media_type="video/mp4",
+                filename=path.name,
+            )
+
+    raise HTTPException(status_code=404, detail="File not found")
+
 
 @app.get("/health")
 def health():
@@ -750,6 +1678,7 @@ def health():
         "model_type": FIXED_MODEL_TYPE,
         "base_model_type": FIXED_BASE_MODEL_TYPE,
         "template_file": str(TEMPLATE_FILE),
+        "monitor_url": "/monitor",
         "modes": list(MODE_CONTROLS.keys()),
     }
 
